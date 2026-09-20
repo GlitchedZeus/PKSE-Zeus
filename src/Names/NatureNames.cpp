@@ -1,42 +1,276 @@
+// AUTO-GENERATED from PKHeX's natures text (id = array index).
+// Source: PKHeX.Core/Resources/text/other/{lang}/text_Natures_{lang}.txt, one table per language.
+// Regenerate with tools/gen_simplenames.py (see tools/pkhex_source.py).
 #include <cstdint>
 #include <cstddef>
 
-namespace Names {
-    // Nature name lookup table - indexed by Nature ID (0-24)
-    static const char* NATURE_NAMES[] = {
-        "Hardy",    // 0
-        "Lonely",   // 1
-        "Brave",    // 2
-        "Adamant",  // 3
-        "Naughty",  // 4
-        "Bold",     // 5
-        "Docile",   // 6
-        "Relaxed",  // 7
-        "Impish",   // 8
-        "Lax",      // 9
-        "Timid",    // 10
-        "Hasty",    // 11
-        "Serious",  // 12
-        "Jolly",    // 13
-        "Naive",    // 14
-        "Modest",   // 15
-        "Mild",     // 16
-        "Quiet",    // 17
-        "Bashful",  // 18
-        "Rash",     // 19
-        "Calm",     // 20
-        "Gentle",   // 21
-        "Sassy",    // 22
-        "Careful",  // 23
-        "Quirky"    // 24
+#include "Names/NameLanguage.h"
+
+namespace Names
+{
+    static const char* const NATURE_NAMES_JA[] = {
+        "がんばりや",
+        "さみしがり",
+        "ゆうかん",
+        "いじっぱり",
+        "やんちゃ",
+        "ずぶとい",
+        "すなお",
+        "のんき",
+        "わんぱく",
+        "のうてんき",
+        "おくびょう",
+        "せっかち",
+        "まじめ",
+        "ようき",
+        "むじゃき",
+        "ひかえめ",
+        "おっとり",
+        "れいせい",
+        "てれや",
+        "うっかりや",
+        "おだやか",
+        "おとなしい",
+        "なまいき",
+        "しんちょう",
+        "きまぐれ",
+    };
+    static const char* const NATURE_NAMES_EN[] = {
+        "Hardy",
+        "Lonely",
+        "Brave",
+        "Adamant",
+        "Naughty",
+        "Bold",
+        "Docile",
+        "Relaxed",
+        "Impish",
+        "Lax",
+        "Timid",
+        "Hasty",
+        "Serious",
+        "Jolly",
+        "Naive",
+        "Modest",
+        "Mild",
+        "Quiet",
+        "Bashful",
+        "Rash",
+        "Calm",
+        "Gentle",
+        "Sassy",
+        "Careful",
+        "Quirky",
+    };
+    static const char* const NATURE_NAMES_FR[] = {
+        "Hardi",
+        "Solo",
+        "Brave",
+        "Rigide",
+        "Mauvais",
+        "Assuré",
+        "Docile",
+        "Relax",
+        "Malin",
+        "Lâche",
+        "Timide",
+        "Pressé",
+        "Sérieux",
+        "Jovial",
+        "Naïf",
+        "Modeste",
+        "Doux",
+        "Discret",
+        "Pudique",
+        "Foufou",
+        "Calme",
+        "Gentil",
+        "Malpoli",
+        "Prudent",
+        "Bizarre",
+    };
+    static const char* const NATURE_NAMES_IT[] = {
+        "Ardita",
+        "Schiva",
+        "Audace",
+        "Decisa",
+        "Birbona",
+        "Sicura",
+        "Docile",
+        "Placida",
+        "Scaltra",
+        "Fiacca",
+        "Timida",
+        "Lesta",
+        "Seria",
+        "Allegra",
+        "Ingenua",
+        "Modesta",
+        "Mite",
+        "Quieta",
+        "Ritrosa",
+        "Ardente",
+        "Calma",
+        "Gentile",
+        "Vivace",
+        "Cauta",
+        "Furba",
+    };
+    static const char* const NATURE_NAMES_DE[] = {
+        "Robust",
+        "Solo",
+        "Mutig",
+        "Hart",
+        "Frech",
+        "Kühn",
+        "Sanft",
+        "Locker",
+        "Pfiffig",
+        "Lasch",
+        "Scheu",
+        "Hastig",
+        "Ernst",
+        "Froh",
+        "Naiv",
+        "Mäßig",
+        "Mild",
+        "Ruhig",
+        "Zaghaft",
+        "Hitzig",
+        "Still",
+        "Zart",
+        "Forsch",
+        "Sacht",
+        "Kauzig",
+    };
+    static const char* const NATURE_NAMES_ES[] = {
+        "Fuerte",
+        "Huraña",
+        "Audaz",
+        "Firme",
+        "Pícara",
+        "Osada",
+        "Dócil",
+        "Plácida",
+        "Agitada",
+        "Floja",
+        "Miedosa",
+        "Activa",
+        "Seria",
+        "Alegre",
+        "Ingenua",
+        "Modesta",
+        "Afable",
+        "Mansa",
+        "Tímida",
+        "Alocada",
+        "Serena",
+        "Amable",
+        "Grosera",
+        "Cauta",
+        "Rara",
+    };
+    static const char* const NATURE_NAMES_KO[] = {
+        "노력",
+        "외로움",
+        "용감",
+        "고집",
+        "개구쟁이",
+        "대담",
+        "온순",
+        "무사태평",
+        "장난꾸러기",
+        "촐랑",
+        "겁쟁이",
+        "성급",
+        "성실",
+        "명랑",
+        "천진난만",
+        "조심",
+        "의젓",
+        "냉정",
+        "수줍음",
+        "덜렁",
+        "차분",
+        "얌전",
+        "건방",
+        "신중",
+        "변덕",
+    };
+    static const char* const NATURE_NAMES_ZH_HANS[] = {
+        "勤奋",
+        "怕寂寞",
+        "勇敢",
+        "固执",
+        "顽皮",
+        "大胆",
+        "坦率",
+        "悠闲",
+        "淘气",
+        "乐天",
+        "胆小",
+        "急躁",
+        "认真",
+        "爽朗",
+        "天真",
+        "内敛",
+        "慢吞吞",
+        "冷静",
+        "害羞",
+        "马虎",
+        "温和",
+        "温顺",
+        "自大",
+        "慎重",
+        "浮躁",
+    };
+    static const char* const NATURE_NAMES_ZH_HANT[] = {
+        "勤奮",
+        "怕寂寞",
+        "勇敢",
+        "固執",
+        "頑皮",
+        "大膽",
+        "坦率",
+        "悠閒",
+        "淘氣",
+        "樂天",
+        "膽小",
+        "急躁",
+        "認真",
+        "爽朗",
+        "天真",
+        "內斂",
+        "慢吞吞",
+        "冷靜",
+        "害羞",
+        "馬虎",
+        "溫和",
+        "溫順",
+        "自大",
+        "慎重",
+        "浮躁",
     };
 
-    constexpr size_t NATURE_NAMES_COUNT = 25;
+    /// Indexed by Names::displayLanguageIndex(); see Names/NameLanguage.h.
+    static const char* const* const NATURE_NAMES_BY_LANGUAGE[] = {
+        NATURE_NAMES_JA,
+        NATURE_NAMES_EN,
+        NATURE_NAMES_FR,
+        NATURE_NAMES_IT,
+        NATURE_NAMES_DE,
+        NATURE_NAMES_ES,
+        NATURE_NAMES_KO,
+        NATURE_NAMES_ZH_HANS,
+        NATURE_NAMES_ZH_HANT,
+    };
+    static_assert(sizeof(NATURE_NAMES_BY_LANGUAGE) / sizeof(NATURE_NAMES_BY_LANGUAGE[0]) == LANGUAGE_COUNT,
+                  "NATURE_NAMES_BY_LANGUAGE must carry one table per language");
 
-    const char* getNatureName(uint8_t natureId) {
-        if (natureId >= NATURE_NAMES_COUNT) {
-            return "Unknown";
-        }
-        return NATURE_NAMES[natureId];
+    const char *getNatureName(uint8_t id)
+    {
+        constexpr size_t count = sizeof(NATURE_NAMES_EN) / sizeof(NATURE_NAMES_EN[0]);
+        if (id >= count) return "Unknown";
+        return NATURE_NAMES_BY_LANGUAGE[displayLanguageIndex()][id];
     }
 }

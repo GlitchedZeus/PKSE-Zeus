@@ -15,10 +15,19 @@ namespace Utils {
     bool copyDirectory(const char* srcPath, const char* destPath);
     bool copyFile(const char* srcPath, const char* destPath);
     bool deleteDirectoryRecursive(const char* path);
+    // Copies a title's live save data into `destDir` (which must already exist), mounting and
+    // unmounting the save device around the copy. This is the half of backupSaveData that actually
+    // moves bytes, split out so a caller can take the same copy into a scratch directory of its
+    // own -- a working copy that landed in the user's backup list instead would make the backup
+    // screen unusable inside a week.
+    bool copySaveDataTo(AccountUid userUid, u64 titleId, const char* destDir);
+
     // Copies the current game save into PKSE/{titleName}/. When `timestamped` is true a new
     // timestamped history folder is created; when false a single reusable "Working" folder is
     // overwritten (auto-backup disabled — no pile-up). Returns the created folder path, or "" on failure.
-    std::string backupSaveData(AccountUid userUid, u64 titleId, std::string titleName, bool timestamped = true);
+    /// `titleFolder` is the DIRECTORY name (Save::titleFolderName), not the prose title -- it
+    /// carries the title id, because two titles sharing a backup folder is data loss.
+    std::string backupSaveData(AccountUid userUid, u64 titleId, std::string titleFolder, bool timestamped = true);
     // Copy a backup's save files onto the real game save. The backup directory IS the edited
     // save -- PKSE writes edits straight into it -- so there is no separate "modified" copy.
     // `primaryFile` is the one file a backup must hold; the game's `optionalFiles` beside it are

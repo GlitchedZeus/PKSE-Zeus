@@ -15,7 +15,8 @@ PKSE is a homebrew application for conveniently editing Pokemon save files on th
 - Edit trainer info and item pouches.
 - **Pokemon creator** — build a Pokemon from scratch in any supported game's format, with legal options highlighted.
 - **Legality checker** — flags illegal values as you edit (informational; it never blocks or auto-changes anything).
-- **Cross-game bank** — PKSE-native persistent storage that every supported game shares. Deposit from one game and withdraw into another and the Pokemon is converted into the destination's format on the way out, preserving its origin (OT, IDs, met data, IVs/nature/PID). Moves the destination can't legally know are cleared, since an impossible move corrupts the Pokemon in some games.
+- **Cross-game bank** — PKSE-native persistent storage that every supported game shares, 200 boxes deep. Deposit from one game and withdraw into another and the Pokemon is converted into the destination's format on the way out, preserving its origin (OT, IDs, met data, IVs/nature/PID). Moves the destination can't legally know are cleared, since an impossible move corrupts the Pokemon in some games.
+- **PKSM bank import** — read a PKSM `.bnk` file straight off the SD card (Minus in the Storage view opens a file browser) and pull its Pokemon into PKSE's bank, keeping your box layout and box names. Every generation a PKSM bank can hold is covered — Gens 1 through 9 — and the preview reports exactly what it found before anything is written.
 
 ## **Screenshots**
 
@@ -133,7 +134,17 @@ Create or update the file in .vscode/c_cpp_properties.json with the following co
 
 #### **4.1. Fetch the Pokemon sprites** (one time)
 
-The HD Pokemon sprites are **not** downloaded by `make`. Fetch them once from the [PokeAPI HOME renders](https://github.com/PokeAPI/sprites) and downscale them into `romfs/` with the bundled script — it needs Python 3 and [Pillow](https://pypi.org/project/Pillow/) (`pip install pillow`):
+`romfs/` is gitignored, so a fresh checkout starts with no art and no fonts, and **the build will
+refuse to start until they are there** — it downloads nothing itself and tells you which script to
+run. Three of them take seconds and need only Python 3:
+
+```bash
+python tools/gen_fonts.py        # the three SIL OFL UI fonts
+python tools/gen_typeicons.py    # the 19 type icons
+python tools/gen_marks.py        # the origin markings
+```
+
+The HD Pokemon sprites are the long one. Fetch them once from the [PokeAPI HOME renders](https://github.com/PokeAPI/sprites) and downscale them into `romfs/` with the bundled script — it needs Python 3 and [Pillow](https://pypi.org/project/Pillow/) (`pip install pillow`):
 
 ```bash
 python tools/gen_hdsprites.py
@@ -146,27 +157,20 @@ This writes 256px PNGs into `romfs/sprites/pokemon_hd/` (every base species plus
 Open MSys2 (should have been included with the devkitPro toolset), navigate to the root directory and run:
 
 ```bash
-make clean && make all
-```
-
-`make all` downloads the type icons and UI font (if they're missing), then generates the `.nro` in the build directory, which you can deploy to your Nintendo Switch. If the type icons, font and sprites are already present, skip the downloads with:
-
-```bash
 make clean && make
 ```
-or  
 
-```bash
-make clean && make all prod
-```
+This generates the `.nro` in the build directory, which you can deploy to your Nintendo Switch. (`make all` is an alias for the same thing — it used to fetch the assets first, and no longer does.) **Nothing in the build downloads anything.** If an asset from step 4.1 is missing the build stops before it starts and names the script that fetches it, rather than reaching the network itself or producing an `.nro` with art missing from it.
 
-`prod` argument ensures no debug or trace logs are being written clogging up space on the sdcard.
+The fetchers are safe to re-run at any time; they only download what is absent, and `--force` re-fetches everything.
+
+There is no separate production build. SD-card logging is a **runtime** setting — Settings → *Enable Debug Logging*, off by default — so the `.nro` you test is the one you ship, and a user who hits a bug can always produce a log.
 
 ---
 
 ## **Regenerating the data tables**
 
-Most of the game data PKSE relies on — species / move / ability / item names, learnsets, per-species info (abilities, gender ratios, forms), item-pouch contents, met-location names, move PP and Pokedex entry placement — lives in **generated** source files under `src/Names/` and `src/Pokemon/`. These are **committed to the repo**, but a normal build never regenerates them: `make` just compiles them, and you do **not** need any of the tools below to build PKSE.
+Most of the game data PKSE relies on — species / move / ability / item names, learnsets, per-species info (abilities, gender ratios, forms), item-pouch contents, met-location names, move PP and Pokedex entry placement — lives in **generated** source files under `src/Names/` and `src/Pokemon/`. These are **committed to the repo**, so a normal build never regenerates them: `make` just compiles them, and you do **not** need any of the tools below to build PKSE.
 
 You only need to regenerate a table when its upstream data changes — a new game, a DLC that adds Pokemon / moves / items, or a correction in [PKHeX](https://github.com/kwsch/PKHeX). The generators live in `tools/` and are run **by hand, one at a time**.
 
@@ -229,6 +233,7 @@ After regenerating, review the diff to the affected file(s) and commit it.
 ## **Credits**
 
 - PKHeX Team: core save editing logic are derived from the PKHeX project. Visit their official repository: https://github.com/kwsch/PKHeX.
+- PKSM Team: for their work on the 3DS and their bank system. Visit their official repository: https://github.com/FlagBrew/PKSM.
 - PokeAPI Team: for their work on sprites: https://github.com/PokeAPI/sprites
 - libnx and devkitPro communities for Switch homebrew development tools. Visit their official website: https://devkitpro.org/wiki/Getting_Started.
 
