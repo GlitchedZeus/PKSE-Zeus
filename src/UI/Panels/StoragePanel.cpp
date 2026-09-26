@@ -7,15 +7,19 @@
 #include "UI/Panels/StoragePanel.h"
 #include "UI/Panels/CarriedSprite.h" // drawLiftedMon -- shared with the Boxes view
 #include "UI/TrainerViewScreen.h"
+#include "Trainer/OriginStamp.h" // originStampLabel -- the origin stamp on the detail strip
 #include "UI/Common.h"
 #include "UI/PKSEFramebuffer.h"
 #include "UI/SpriteManager.h"
-#include "UI/ScreenChrome.h" // drawGlyphButton -- on-button controller glyphs
+#include "UI/Dialogs/EditControls.h" // drawEditChoiceButton -- dialog buttons, drawn and hit-tested together
+#include "UI/ScreenChrome.h"         // on-button controller glyphs
 #include "UI/Dialogs/DialogFrame.h"
 #include "Names/FormNames.h" // getDisplayName -- variant prefix ("Alolan Raichu", etc.)
+#include "Names/ItemNames.h" // getItemNameFor -- the item that chooses a trade evolution
 #include "Trainer/Trainer.h"
 #include "Trainer/Bank.h"
 #include "Pokemon/Pokemon.h"
+#include "Pokemon/Evolution.h" // getTradeEvolutionOffer -- the trade-evolve destination choice
 
 using namespace Trainer;
 
@@ -68,37 +72,40 @@ namespace UI
             };
 
             // Draw one Pokemon (sprite + shiny/party markers) centered on a slot disc of radius discR.
-            void drawSlotDisc(TrainerViewScreen &screen, PKSEFramebuffer &fb,
-                              const Pokemon::Pokemon *pk, bool savePane, int boxIndex, int slotIndex,
-                              int cx, int cy, int discR)
+            void drawSlotDisc(TrainerViewScreen &screen, PKSEFramebuffer &framebuffer,
+                              const Pokemon::Pokemon *pokemon, bool savePane, int boxIndex, int slotIndex,
+                              int centerX, int centerY, int discR)
             {
-                if (!pk || pk->speciesID() == 0)
+                if (!pokemon || pokemon->speciesID() == 0)
                     return;
 
-                const std::string speciesName(pk->species());
-                const bool isShiny = pk->isShiny(pk->id32(), speciesName);
+                const std::string speciesName(pokemon->species());
+                const bool isShiny = pokemon->isShiny(pokemon->id32(), speciesName);
 
-                const int sz = static_cast<int>(discR * 1.75);
-                if (pk->isEgg())
+                const int size = static_cast<int>(discR * 1.75);
+                if (pokemon->isEgg())
                 {
-                    fb.drawEgg(cx, cy, sz); // eggs show as an egg in the grid
+                    framebuffer.drawEgg(centerX, centerY, size); // eggs show as an egg in the grid
                 }
                 else
                 {
-                    Sprite *sprite = SpriteManager::getIconSprite(pk->speciesID(), pk->form(), isShiny);
+                    Sprite *sprite = SpriteManager::getIconSprite(pokemon->speciesID(), pokemon->form(), isShiny);
                     if (sprite && sprite->data)
-                        fb.drawImageScaled(cx - sz / 2, cy - sz / 2, sprite->width, sprite->height, sz, sz, sprite->data, sprite->channels);
+                        framebuffer.drawImageScaled(centerX - size / 2, centerY - size / 2, sprite->width,
+                                                    sprite->height, size, size, sprite->data, sprite->channels);
                 }
 
                 if (isShiny)
-                    fb.drawShinyMark(cx + discR - 15, cy - discR + 1, 15, Colors::ShinyStar); // top-right
+                    // top-right
+                    framebuffer.drawShinyMark(centerX + discR - 15, centerY - discR + 1, 15, Colors::ShinyStar);
 
                 // Party-membership badge (save pane only): partner heart (top-left) or party number (bottom-left).
                 if (savePane)
                 {
                     if (screen.trainer.isStarterPokemon(boxIndex, slotIndex))
                     {
-                        fb.drawSymbol(cx - discR, cy - discR + 2, "\xE2\x99\xA5", Colors::PartnerHeart);
+                        framebuffer.drawSymbol(centerX - discR, centerY - discR + 2, "\xE2\x99\xA5",
+                                               Colors::PartnerHeart);
                     }
                     else
                     {
@@ -106,12 +113,13 @@ namespace UI
                         if (partyPos > 0)
                         {
                             // Gold badge + dark digit at the disc's bottom-left, legible on any sprite/theme.
-                            const std::string n = std::to_string(partyPos);
-                            const int bx = cx - discR + 9, by = cy + discR - 9;
-                            fb.drawFilledCircle(bx, by, 9, Colors::PartyBadge);
-                            int tw, th;
-                            fb.measureText(n, tw, th, TextStyle::Caption);
-                            fb.drawText(bx - tw / 2, by - th / 2, n, Colors::PartyBadgeText, TextStyle::Caption);
+                            const std::string count = std::to_string(partyPos);
+                            const int boxX = centerX - discR + 9, by = centerY + discR - 9;
+                            framebuffer.drawFilledCircle(boxX, by, 9, Colors::PartyBadge);
+                            int textWidth, th;
+                            framebuffer.measureText(count, textWidth, th, TextStyle::Caption);
+                            framebuffer.drawText(boxX - textWidth / 2, by - th / 2, count, Colors::PartyBadgeText,
+                                                 TextStyle::Caption);
                         }
                     }
                 }
@@ -119,51 +127,63 @@ namespace UI
 
             // Draws one storage pane in the HOME box style (rounded card + indigo header band + disc
             // grid), and reports its cell geometry via outGeom.
-            void drawPane(TrainerViewScreen &screen, PKSEFramebuffer &fb,
-                          int px, int py, int pw, int ph, bool savePane,
+            void drawPane(TrainerViewScreen &screen, PKSEFramebuffer &framebuffer,
+                          int panelX, int panelY, int panelWidth, int panelHeight, bool savePane,
                           int boxIndex, int cursorSlot, bool focused, bool entered,
                           int cols, int rows, int slotsPerBox,
                           const std::string &label, int boxCount, PaneGeom &outGeom)
             {
-                fb.drawFilledRoundedRect(px, py, pw, ph, 16, Colors::Panel);
+                framebuffer.drawFilledRoundedRect(panelX, panelY, panelWidth, panelHeight, 16, Colors::Panel);
 
                 // Header band (rounded top). Focused pane = accent indigo; unfocused = dim.
                 constexpr int headerH = 44;
                 const Color band = focused ? Colors::AccentDim : Colors::Border;
-                fb.drawFilledRoundedRect(px, py, pw, headerH, 16, band);
-                fb.drawFilledRect(px, py + headerH - 16, pw, 16, band);
+                framebuffer.drawFilledRoundedRect(panelX, panelY, panelWidth, headerH, 16, band);
+                framebuffer.drawFilledRect(panelX, panelY + headerH - 16, panelWidth, 16, band);
 
-                int lw, lh;
-                fb.measureText(label, lw, lh, TextStyle::Body);
-                const int pillW = std::min(pw - 120, lw + 40), pillH = 28;
-                const int pillX = px + (pw - pillW) / 2, pillY = py + (headerH - pillH) / 2;
+                int labelWidth, lh;
+                framebuffer.measureText(label, labelWidth, lh, TextStyle::Body);
+                const int pillW = std::min(panelWidth - 120, labelWidth + 40), pillH = 28;
+                const int pillX = panelX + (panelWidth - pillW) / 2, pillY = panelY + (headerH - pillH) / 2;
                 // Amber pill when the header itself is focused (navigate up to it, or tap it, to rename
                 // this box). cursorSlot == -1 is the "header focused" sentinel.
                 const bool headerFocused = focused && entered && cursorSlot == -1;
-                fb.drawPill(pillX, pillY, pillW, pillH, headerFocused ? Colors::Primary : Colors::Panel);
-                fb.drawText(px + (pw - lw) / 2, pillY + (pillH - lh) / 2, label, headerFocused ? Colors::PrimaryText : Colors::Text);
+                framebuffer.drawPill(pillX, pillY, pillW, pillH, headerFocused ? Colors::Primary : Colors::Panel);
+                framebuffer.drawText(panelX + (panelWidth - labelWidth) / 2, pillY + (pillH - lh) / 2, label,
+                                     headerFocused ? Colors::PrimaryText : Colors::Text);
 
-                const int arrowY = py + (headerH - lh) / 2;
-                fb.drawSymbol(px + 18, arrowY, "\xE2\x97\x80", focused ? Colors::Text : Colors::TextDim);      // left
-                fb.drawSymbol(px + pw - 32, arrowY, "\xE2\x96\xB6", focused ? Colors::Text : Colors::TextDim); // right
-                // Tappable box arrows (special slot ids -2 = prev box, -3 = next box) and the name pill
+                const int arrowY = panelY + (headerH - lh) / 2;
+                // left
+                framebuffer.drawSymbol(panelX + 18, arrowY, "\xE2\x97\x80", focused ? Colors::Text : Colors::TextDim);
+                framebuffer.drawSymbol(panelX + panelWidth - 32, arrowY, "\xE2\x96\xB6",
+                                       focused ? Colors::Text : Colors::TextDim); // right
+                // Tappable box arrows (special slot ids -2 = previous box, -3 = next box) and the name pill
                 // (-4 = rename this box). The name target sits between the two arrow zones.
-                screen.storageTouchTargets.push_back({savePane ? 0 : 1, boxIndex, -2, px, py, 64, headerH});
-                screen.storageTouchTargets.push_back({savePane ? 0 : 1, boxIndex, -3, px + pw - 64, py, 64, headerH});
-                screen.storageTouchTargets.push_back({savePane ? 0 : 1, boxIndex, -4, px + 64, py, pw - 128, headerH});
+                screen.storageTouchTargets.push_back({savePane ? 0 : 1, boxIndex, -2, panelX, panelY, 64, headerH});
+                screen.storageTouchTargets.push_back(
+                    {savePane ? 0 : 1, boxIndex, -3, panelX + panelWidth - 64, panelY, 64, headerH});
+                screen.storageTouchTargets.push_back(
+                    {savePane ? 0 : 1, boxIndex, -4, panelX + 64, panelY, panelWidth - 128, headerH});
                 std::string counter = std::to_string(boxIndex + 1) + " / " + std::to_string(boxCount);
-                int cw, ch;
-                fb.measureText(counter, cw, ch, TextStyle::Caption);
-                fb.drawText(px + pw - 44 - cw, py + (headerH - ch) / 2, counter, focused ? Colors::Text : Colors::TextDim, TextStyle::Caption);
+                int captionWidth, ch;
+                framebuffer.measureText(counter, captionWidth, ch, TextStyle::Caption);
+                framebuffer.drawText(panelX + panelWidth - 44 - captionWidth, panelY + (headerH - ch) / 2, counter,
+                                     focused ? Colors::Text : Colors::TextDim, TextStyle::Caption);
 
-                const int gridTop = py + headerH + 8;
-                const int gridX = px + 14, gridW = pw - 28, gridH = ph - headerH - 18;
-                const int colPitch = gridW / cols, rowPitch = gridH / rows;
+                const int gridTop = panelY + headerH + 8;
+                const int gridW = panelWidth - 28, gridH = panelHeight - headerH - 18;
+                // Both panes use the same cell pitch -- the reference width -- so a narrow save box
+                // (Gen 1: 20 slots, 4 wide) has cells identical to the bank's beside it instead of
+                // fatter ones, and its rows line up with the bank's row for row. The narrow grid is
+                // centred in its pane; shifting the ORIGIN means cellX(), the multi-select rect, the
+                // drag preview and the touch targets all move with it and cannot disagree.
+                const int colPitch = gridW / BOX_GRID_REFERENCE_COLUMNS, rowPitch = gridH / rows;
+                const int gridX = panelX + 14 + boxGridCenterOffset(cols, colPitch);
                 int discR = std::min(colPitch, rowPitch) / 2 - 4;
                 if (discR < 12)
                     discR = 12;
                 outGeom = PaneGeom{gridX, gridTop, colPitch, rowPitch, discR, cols, rows,
-                                   px + pw / 2, pillY};
+                                   panelX + panelWidth / 2, pillY};
 
                 const int thisPane = savePane ? 0 : 1;
 
@@ -174,41 +194,54 @@ namespace UI
                 if (screen.currentlySelecting && entered && screen.selectPane == thisPane &&
                     screen.selectBox == boxIndex && cursorSlot >= 0)
                 {
-                    const int ax = screen.selectDimensions.first, ay = screen.selectDimensions.second;
-                    const int cxs = cursorSlot % cols, cys = cursorSlot / cols;
-                    selC0 = std::min(ax, cxs);
-                    selC1 = std::max(ax, cxs);
+                    const int anchorColumn = screen.selectDimensions.first, ay = screen.selectDimensions.second;
+                    const int cursorColumn = cursorSlot % cols, cys = cursorSlot / cols;
+                    selC0 = std::min(anchorColumn, cursorColumn);
+                    selC1 = std::max(anchorColumn, cursorColumn);
                     selR0 = std::min(ay, cys);
                     selR1 = std::max(ay, cys);
-                    const Color wash(Colors::CursorMulti.r, Colors::CursorMulti.g, Colors::CursorMulti.b, 64);
-                    fb.drawFilledRoundedRect(gridX + selC0 * colPitch + 2, gridTop + selR0 * rowPitch + 2,
+                    const Color wash(Colors::CursorMulti.red, Colors::CursorMulti.green, Colors::CursorMulti.blue, 64);
+                    framebuffer.drawFilledRoundedRect(gridX + selC0 * colPitch + 2, gridTop + selR0 * rowPitch + 2,
                                              (selC1 - selC0 + 1) * colPitch - 4, (selR1 - selR0 + 1) * rowPitch - 4,
                                              14, wash);
                 }
 
-                for (int i = 0; i < slotsPerBox; ++i)
+                for (int slotIndex = 0; slotIndex < slotsPerBox; ++slotIndex)
                 {
-                    const int row = i / cols, col = i % cols;
+                    const int row = slotIndex / cols, col = slotIndex % cols;
                     const int cellX = gridX + col * colPitch, cellY = gridTop + row * rowPitch;
-                    const int cx = cellX + colPitch / 2, cy = cellY + rowPitch / 2;
+                    const int centerX = cellX + colPitch / 2, cy = cellY + rowPitch / 2;
 
                     // Whole-cell touch target (consumed next frame in update()).
-                    screen.storageTouchTargets.push_back({thisPane, boxIndex, i, cellX, cellY, colPitch, rowPitch});
+                    screen.storageTouchTargets.push_back(
+                        {thisPane, boxIndex, slotIndex, cellX, cellY, colPitch, rowPitch});
 
-                    const Pokemon::Pokemon *pk = savePane ? screen.trainer.boxes[boxIndex][i].get()
-                                                          : (screen.bank ? screen.bank->boxes[boxIndex][i].get() : nullptr);
-                    const bool empty = !pk || pk->speciesID() == 0;
+                    const Pokemon::Pokemon *pokemon =
+                        savePane ? screen.trainer.boxes[boxIndex][slotIndex].get()
+                                 : (screen.bank ? screen.bank->boxes[boxIndex][slotIndex].get() : nullptr);
+                    const bool empty = !pokemon || pokemon->speciesID() == 0;
 
-                    fb.drawFilledCircle(cx, cy, discR, empty ? Colors::Panel : Colors::PanelAlt);
+                    framebuffer.drawFilledCircle(centerX, cy, discR, empty ? Colors::Panel : Colors::PanelAlt);
                     if (empty)
-                        fb.drawCircle(cx, cy, discR, Colors::Border, 1);
+                        framebuffer.drawCircle(centerX, cy, discR, Colors::Border, 1);
 
-                    drawSlotDisc(screen, fb, pk, savePane, boxIndex, i, cx, cy, discR);
+                    drawSlotDisc(screen, framebuffer, pokemon, savePane, boxIndex, slotIndex, centerX, cy, discR);
+
+                    // Box/Bank search: a box is a grid the player arranged, so matches
+                    // are RINGED and the rest dimmed rather than filtered out -- hiding slots would
+                    // move everything else, and this storage is positional.
+                    if (screen.storageSearch.isFiltering())
+                    {
+                        if (screen.storageSlotMatchesSearch(thisPane, boxIndex, slotIndex))
+                            framebuffer.drawCircle(centerX, cy, discR + 2, Colors::Accent, 3);
+                        else
+                            framebuffer.drawFilledCircle(centerX, cy, discR, Color(0, 0, 0, 140));
+                    }
                 }
 
                 if (selC0 >= 0)
                 {
-                    fb.drawRoundedRect(gridX + selC0 * colPitch + 2, gridTop + selR0 * rowPitch + 2,
+                    framebuffer.drawRoundedRect(gridX + selC0 * colPitch + 2, gridTop + selR0 * rowPitch + 2,
                                        (selC1 - selC0 + 1) * colPitch - 4, (selR1 - selR0 + 1) * rowPitch - 4,
                                        14, Colors::CursorMulti, 3);
                 }
@@ -216,11 +249,12 @@ namespace UI
 
             // The carried block plus the pointer cursor, drawn on top of BOTH panes so a group stays
             // fully visible while it travels across the screen and over the pane boundary.
-            void drawCarryAndCursor(TrainerViewScreen &screen, PKSEFramebuffer &fb, const PaneGeom &g, int cursorSlot)
+            void drawCarryAndCursor(TrainerViewScreen &screen, PKSEFramebuffer &framebuffer, const PaneGeom &g,
+                                    int cursorSlot)
             {
-                const Color cur = cursorColorFor(screen.cursorMode);
+                const Color cursorColor = cursorColorFor(screen.cursorMode);
                 // Gentle vertical bob, a HOME-style pointer wobble done as a sine so it is framerate-independent.
-                const int bob = static_cast<int>(std::sin(fb.getTimeSeconds() * 3.4) * 3.0);
+                const int bobOffset = static_cast<int>(std::sin(framebuffer.getTimeSeconds() * 3.4) * 3.0);
                 // The head is symmetric about its point, so the point goes straight on the slot's
                 // centre line -- no horizontal nudge needed.
 
@@ -229,40 +263,41 @@ namespace UI
                 // never invisible, rather than relying on the pill's amber highlight alone.
                 if (cursorSlot < 0)
                 {
-                    fb.drawPointerCursor(g.pillCx, g.pillTop - 2 + bob, kGridCursorH, cur);
+                    framebuffer.drawPointerCursor(g.pillCx, g.pillTop - 2 + bobOffset, GRID_CURSOR_HEIGHT, cursorColor);
                     return; // the header is unreachable while carrying
                 }
 
                 if (screen.carrying())
                 {
-                    const int w = std::max(1, screen.selectDimensions.first);
-                    const int h = std::max(1, screen.selectDimensions.second);
+                    const int selectionColumns = std::max(1, screen.selectDimensions.first);
+                    const int selectionRows = std::max(1, screen.selectDimensions.second);
                     const bool fits = screen.checkPutDownBounds();
                     // A group that would hang off the grid is tinted with the warning colour, so the
                     // "must land in the exact slots" rule is visible before you press A rather than after.
-                    const Color tint = fits ? cur : Colors::Warning;
+                    const Color tint = fits ? cursorColor : Colors::Warning;
                     const int baseX = g.cellX(cursorSlot), baseY = g.cellY(cursorSlot);
-                    for (int y = 0; y < h; ++y)
+                    for (int yIndex = 0; yIndex < selectionRows; ++yIndex)
                     {
-                        for (int x = 0; x < w; ++x)
+                        for (int columnOffset = 0; columnOffset < selectionColumns; ++columnOffset)
                         {
-                            const size_t idx = static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x);
-                            if (idx >= screen.moveMon.size())
+                            const size_t index = static_cast<size_t>(yIndex) * static_cast<size_t>(selectionColumns) +
+                                                 static_cast<size_t>(columnOffset);
+                            if (index >= screen.moveMon.size())
                                 continue;
-                            const int cx = baseX + x * g.colPitch + g.colPitch / 2;
-                            const int cy = baseY + y * g.rowPitch + g.rowPitch / 2 + bob;
+                            const int cellCenterX = baseX + columnOffset * g.colPitch + g.colPitch / 2;
+                            const int cellCenterY = baseY + yIndex * g.rowPitch + g.rowPitch / 2 + bobOffset;
                             // Backing tile marks the footprint the block will occupy -- including its
                             // holes, which stay empty when it lands.
-                            if (w > 1 || h > 1)
-                                fb.drawFilledRoundedRect(cx - g.colPitch / 2 + 3, cy - g.rowPitch / 2 + 3,
-                                                         g.colPitch - 6, g.rowPitch - 6, 14,
-                                                         Color(tint.r, tint.g, tint.b, 70));
-                            drawLiftedMon(fb, screen.moveMon[idx].get(), cx, cy, g.discR);
+                            if (selectionColumns > 1 || selectionRows > 1)
+                                framebuffer.drawFilledRoundedRect(
+                                    cellCenterX - g.colPitch / 2 + 3, cellCenterY - g.rowPitch / 2 + 3, g.colPitch - 6,
+                                    g.rowPitch - 6, 14, Color(tint.red, tint.green, tint.blue, 70));
+                            drawLiftedMon(framebuffer, screen.moveMon[index].get(), cellCenterX, cellCenterY, g.discR);
                         }
                     }
-                    if (w > 1 || h > 1)
-                        fb.drawRoundedRect(baseX + 3, baseY + 3 + bob, w * g.colPitch - 6, h * g.rowPitch - 6,
-                                           14, tint, 3);
+                    if (selectionColumns > 1 || selectionRows > 1)
+                        framebuffer.drawRoundedRect(baseX + 3, baseY + 3 + bobOffset, selectionColumns * g.colPitch - 6,
+                                                    selectionRows * g.rowPitch - 6, 14, tint, 3);
                 }
 
                 // The cursor itself, in the active mode's colour: its point rests on the top of the
@@ -270,115 +305,124 @@ namespace UI
                 // party badge all stay visible. On the top row the body runs up over the box-name pill
                 // -- deliberately, the way HOME's cursor does; it is drawn last, so it floats over the
                 // header instead of being clipped by it.
-                const int cx = g.centerX(cursorSlot), cy = g.centerY(cursorSlot);
-                fb.drawPointerCursor(cx, cy - g.discR - 3 + bob, kGridCursorH, cur);
+                const int cellCenterX = g.centerX(cursorSlot), cellCenterY = g.centerY(cursorSlot);
+                framebuffer.drawPointerCursor(cellCenterX, cellCenterY - g.discR - 3 + bobOffset, GRID_CURSOR_HEIGHT,
+                                              cursorColor);
             }
         }
 
-        void drawStorageView(TrainerViewScreen &screen, PKSEFramebuffer &fb, int x, int y, int width, int height)
+        void drawStorageView(TrainerViewScreen &screen, PKSEFramebuffer &framebuffer, int storageViewX,
+                             int storageViewY, int storageViewWidth, int storageViewHeight)
         {
             if (!screen.bank)
             {
-                fb.drawCard(x, y, width, height);
-                fb.drawText(x + 16, y + 70, "Bank unavailable", Colors::TextDim);
+                framebuffer.drawCard(storageViewX, storageViewY, storageViewWidth, storageViewHeight);
+                framebuffer.drawText(storageViewX + 16, storageViewY + 70, "Bank unavailable", Colors::TextDim);
                 return;
             }
 
             const bool entered = screen.detailViewActive; // cursor only shows once the view is entered
             screen.storageTouchTargets.clear();           // rebuilt each frame by drawPane below
 
-            constexpr int gap = 16;
+            constexpr int paneGap = 16;
             constexpr int infoH = 60;
-            const int paneW = (width - gap) / 2;
-            const int paneH = height - infoH - 8;
+            const int paneW = (storageViewWidth - paneGap) / 2;
+            const int paneH = storageViewHeight - infoH - 8;
 
             const int saveSlots = static_cast<int>(screen.trainer.getSlotsPerBox());
-            const int saveCols = (saveSlots == 25) ? 5 : 6;
+            const int saveCols = boxGridColumns(saveSlots);
             const int bankSlots = static_cast<int>(Bank::BANK_SLOTS_PER_BOX);
-            const int bankCols = 6;
-            const int rows = 5;
+            const int bankCols = boxGridColumns(bankSlots);
+            const int rows = BOX_GRID_ROWS;
 
             const bool saveFocused = screen.storageFocusPane == 0;
             const bool bankFocused = screen.storageFocusPane == 1;
 
-            std::string saveLabel = screen.stSaveBox < static_cast<int>(screen.trainer.boxNames.size())
-                                        ? screen.trainer.boxNames[screen.stSaveBox]
-                                        : ("Box " + std::to_string(screen.stSaveBox + 1));
+            std::string saveLabel = screen.selectedBoxIndex < static_cast<int>(screen.trainer.boxNames.size())
+                                        ? screen.trainer.boxNames[screen.selectedBoxIndex]
+                                        : ("Box " + std::to_string(screen.selectedBoxIndex + 1));
             std::string bankLabel = screen.bank->boxDisplayName(screen.stBankBox);
 
             PaneGeom saveGeom, bankGeom;
 
-            drawPane(screen, fb, x, y, paneW, paneH, /*savePane*/ true,
-                     screen.stSaveBox, screen.stSaveSlot, saveFocused, entered,
+            drawPane(screen, framebuffer, storageViewX, storageViewY, paneW, paneH, /*savePane*/ true,
+                     screen.selectedBoxIndex, screen.stSaveSlot, saveFocused, entered,
                      saveCols, rows, saveSlots, saveLabel, static_cast<int>(screen.trainer.getBoxCount()), saveGeom);
 
-            drawPane(screen, fb, x + paneW + gap, y, paneW, paneH, /*savePane*/ false,
-                     screen.stBankBox, screen.stBankSlot, bankFocused, entered,
-                     bankCols, rows, bankSlots, bankLabel, static_cast<int>(Bank::BANK_BOX_COUNT), bankGeom);
+            drawPane(screen, framebuffer, storageViewX + paneW + paneGap, storageViewY, paneW, paneH,
+                     /*savePane*/ false, screen.stBankBox, screen.stBankSlot, bankFocused, entered, bankCols, rows,
+                     bankSlots, bankLabel, static_cast<int>(Bank::BANK_BOX_COUNT), bankGeom);
 
             // Cursor + carried block last, over BOTH panes: a group being carried from one side to the
             // other must not be painted over by the destination pane's card.
             if (entered)
             {
-                drawCarryAndCursor(screen, fb, saveFocused ? saveGeom : bankGeom,
+                drawCarryAndCursor(screen, framebuffer, saveFocused ? saveGeom : bankGeom,
                                    saveFocused ? screen.stSaveSlot : screen.stBankSlot);
             }
 
-            // --- Info strip ---
-            const int iy = y + paneH + 8;
-            fb.drawCard(x, iy, width, infoH);
+            const int infoRowY = storageViewY + paneH + 8;
+            framebuffer.drawCard(storageViewX, infoRowY, storageViewWidth, infoH);
 
             if (!entered)
             {
-                fb.drawText(x + 16, iy + infoH / 2 - 11, "Press A to open storage", Colors::TextDim, TextStyle::Body);
+                framebuffer.drawText(storageViewX + 16, infoRowY + infoH / 2 - 11, "Press A to open storage",
+                                     Colors::TextDim, TextStyle::Body);
                 return;
             }
 
             // Mode swatch (dot) + name.
             const Color modeCol = cursorColorFor(screen.cursorMode);
-            fb.drawFilledCircle(x + 22, iy + infoH / 2, 8, modeCol);
-            fb.drawText(x + 38, iy + infoH / 2 - 11, modeName(screen.cursorMode), Colors::Text, TextStyle::Body);
+            framebuffer.drawFilledCircle(storageViewX + 22, infoRowY + infoH / 2, 8, modeCol);
+            framebuffer.drawText(storageViewX + 38, infoRowY + infoH / 2 - 11, modeName(screen.cursorMode),
+                                 Colors::Text, TextStyle::Body);
 
             // Right side: how big the group in hand (or being swept out) is, in the mode colour.
-            std::string sel;
+            std::string selectionText;
             if (screen.carrying() && screen.carriedCount() > 1)
             {
-                sel = std::to_string(screen.carriedCount()) + " in hand (" + std::to_string(screen.selectDimensions.first) + "x" + std::to_string(screen.selectDimensions.second) + ")";
+                selectionText = std::to_string(screen.carriedCount()) + " in hand (" +
+                                std::to_string(screen.selectDimensions.first) + "x" +
+                                std::to_string(screen.selectDimensions.second) + ")";
             }
             else if (screen.currentlySelecting)
             {
-                sel = "Selecting - A grabs the group";
+                selectionText = "Selecting - A grabs the group";
             }
-            if (!sel.empty())
+            if (!selectionText.empty())
             {
-                int sw, sh;
-                fb.measureText(sel, sw, sh);
-                fb.drawText(x + width - 16 - sw, iy + infoH / 2 - 11, sel, Colors::CursorMulti, TextStyle::Body);
+                int selectionTextWidth, sh;
+                framebuffer.measureText(selectionText, selectionTextWidth, sh);
+                framebuffer.drawText(storageViewX + storageViewWidth - 16 - selectionTextWidth,
+                                     infoRowY + infoH / 2 - 11, selectionText, Colors::CursorMulti, TextStyle::Body);
             }
 
             // Middle: the held Pokemon, else the one under the focused cursor. When the box-name header
-            // is focused (slot == -1) there is no cursor mon, so prompt the rename instead of indexing.
+            // is focused (slot == -1) there is no cursor pokemon, so prompt the rename instead of indexing.
             const int focusSlot = saveFocused ? screen.stSaveSlot : screen.stBankSlot;
             const bool holding = screen.carrying();
             const Pokemon::Pokemon *focus = screen.firstCarried();
             if (!focus && focusSlot >= 0)
             {
-                focus = saveFocused ? screen.trainer.boxes[screen.stSaveBox][focusSlot].get()
+                focus = saveFocused ? screen.trainer.boxes[screen.selectedBoxIndex][focusSlot].get()
                                     : screen.bank->boxes[screen.stBankBox][focusSlot].get();
             }
 
-            const int tx = x + 120;
+            const int labelX = storageViewX + 120;
             if (focusSlot == -1 && !holding)
             {
-                fb.drawText(tx, iy + infoH / 2 - 11, "Box name selected - press A to rename", Colors::TextDim, TextStyle::Body);
+                framebuffer.drawText(labelX, infoRowY + infoH / 2 - 11, "Box name selected - press A to rename",
+                                     Colors::TextDim, TextStyle::Body);
             }
             else if (holding && screen.carriedCount() > 1)
             {
                 // A whole group in hand: name the leader and say how many ride with it, rather than
                 // pretending one Pokemon is the whole payload.
-                std::string display = Names::getDisplayName(focus->speciesID(), focus->form(), std::string(focus->species()));
-                std::string line = "Holding: " + display + " +" + std::to_string(screen.carriedCount() - 1) + (screen.checkPutDownBounds() ? "   A places them here" : "   won't fit here");
-                fb.drawText(tx, iy + infoH / 2 - 11, line,
+                std::string display =
+                    Names::getDisplayName(focus->speciesID(), focus->form(), std::string(focus->species()));
+                std::string line = "Holding: " + display + " +" + std::to_string(screen.carriedCount() - 1) +
+                                   (screen.checkPutDownBounds() ? "   A places them here" : "   won't fit here");
+                framebuffer.drawText(labelX, infoRowY + infoH / 2 - 11, line,
                             screen.checkPutDownBounds() ? Colors::Text : Colors::Warning, TextStyle::Body);
             }
             else if (focus && focus->speciesID() != 0)
@@ -386,23 +430,63 @@ namespace UI
                 std::string name(focus->species());
                 const bool shiny = focus->isShiny(focus->id32(), name);
                 std::string display = Names::getDisplayName(focus->speciesID(), focus->form(), name);
-                std::string line = (holding ? "Holding: " : "") + display + "   Lv. " + std::to_string(focus->level());
-                fb.drawText(tx, iy + infoH / 2 - 11, line, Colors::Text, TextStyle::Body);
-                int lw, lh;
-                fb.measureText(line, lw, lh, TextStyle::Body);
-                int mx = tx + lw + 10;
+                // Level then dex number, matching the box Summary panel and the details page --
+                // the same pokemon should not be spelled two ways in two views of one screen.
+                std::string line = (holding ? "Holding: " : "") + display +
+                                   "   Lv. " + std::to_string(focus->level()) +
+                                   "   No. " + dexNumberLabel(focus->speciesID());
+                framebuffer.drawText(labelX, infoRowY + infoH / 2 - 11, line, Colors::Text, TextStyle::Body);
+                int labelWidth, lh;
+                framebuffer.measureText(line, labelWidth, lh, TextStyle::Body);
+                int markX = labelX + labelWidth + 10;
                 const char *g = focus->genderSymbol();
                 if (g[0] != '\0')
                 {
-                    fb.drawSymbol(mx, iy + infoH / 2 - 11, g, (std::string(g) == "\xE2\x99\x82") ? Colors::Blue : Colors::Magenta);
-                    mx += 20;
+                    framebuffer.drawSymbol(markX, infoRowY + infoH / 2 - 11, g,
+                                           (std::string(g) == "\xE2\x99\x82") ? Colors::Blue : Colors::Magenta);
+                    markX += 20;
                 }
                 if (shiny)
-                    fb.drawShinyMark(mx, iy + infoH / 2 - 11, 16, Colors::ShinyStar);
+                {
+                    framebuffer.drawShinyMark(markX, infoRowY + infoH / 2 - 11, 16, Colors::ShinyStar);
+                    markX += 22;
+                }
+                // ORIGIN STAMP, trailing the gender/shiny marks so those stay adjacent to the name.
+                // Suppressed while the right-hand side is reporting a selection, which is the more
+                // urgent state and is right-aligned into the same strip.
+                //
+                // THE OPEN SAVE IS THE TITLE CONTEXT ONLY FOR A POKEMON SITTING IN THE SAVE'S OWN
+                // BOXES. A bank record has none -- the bank's tag records a locale, not a title --
+                // and one in hand came from whichever pane it was lifted out of, which the focused
+                // pane no longer tells us. Both pass nullptr and stop at the generation.
+                if (selectionText.empty())
+                {
+                    const Trainer::Trainer *originSave =
+                        (!holding && saveFocused) ? &screen.trainer : nullptr;
+                    markX += 12;
+                    Sprite *originMark = SpriteManager::getOriginMarkSprite(
+                        Trainer::originMarkFor(*focus), Colors::TextDim);
+                    if (originMark != nullptr && originMark->data != nullptr)
+                    {
+                        const int markSize = 18;
+                        framebuffer.drawImageScaled(markX, infoRowY + infoH / 2 - 10, originMark->width,
+                                                    originMark->height, markSize, markSize,
+                                                    originMark->data, originMark->channels);
+                        markX += markSize + 6;
+                    }
+                    // Gen 1/2 have no name worth printing -- the mark IS the answer. Gen 3/4/5 have
+                    // no mark, so the name is the answer. Gen 6+ get both.
+                    if (focus->hasOriginGame())
+                    {
+                        framebuffer.drawText(markX, infoRowY + infoH / 2 - 11,
+                                             Trainer::originStampLabel(*focus, originSave),
+                                             Colors::TextDim, TextStyle::Body);
+                    }
+                }
             }
             else
             {
-                fb.drawText(tx, iy + infoH / 2 - 11, "Empty slot", Colors::TextDim, TextStyle::Body);
+                framebuffer.drawText(labelX, infoRowY + infoH / 2 - 11, "Empty slot", Colors::TextDim, TextStyle::Body);
             }
         }
 
@@ -410,143 +494,300 @@ namespace UI
         {
             // A small centered popup menu (scrim + card + title + item list). Each row is registered as
             // a touch button (id = item index) so a tap selects + confirms it.
-            void drawPopupMenu(TrainerViewScreen &screen, PKSEFramebuffer &fb, const std::string &title,
-                               const char *const *items, int count, int sel, uint32_t disabledMask = 0)
+            void drawPopupMenu(TrainerViewScreen &screen, PKSEFramebuffer &framebuffer, const std::string &title,
+                               const char *const *items, int count, int selectedIndex, uint32_t disabledMask = 0)
             {
                 // Touch-friendly sizing: 56px rows (TouchTargetMin) and a wide card so rows are easy to tap.
-                constexpr int w = 440, rowH = TouchTargetMin;
+                constexpr int dialogWidth = 440, rowH = TouchTargetMin;
                 constexpr int headerH = 60;
-                const int h = headerH + count * rowH + 14;
-                const int x = (fb.getWidth() - w) / 2;
-                const int y = (fb.getHeight() - h) / 2;
-                constexpr int r = Dialogs::kDialogRadius; // same card shape as every other modal
-                fb.drawFilledRect(0, 0, fb.getWidth(), fb.getHeight(), Color(0, 0, 0, 130));
-                fb.drawSoftShadow(x, y, w, h, r);
-                fb.drawFilledRoundedRect(x, y, w, h, r, Colors::Panel);
-                fb.drawRoundedRect(x, y, w, h, r, Colors::Border, 1);
-                fb.drawText(x + 22, y + 16, title, Colors::Text, TextStyle::Heading);
-                fb.drawFilledRect(x + r, y + headerH - 4, w - r * 2, 2, Colors::Accent);
+                const int dialogHeight = headerH + count * rowH + 14;
+                const int dialogX = (framebuffer.getWidth() - dialogWidth) / 2;
+                const int dialogY = (framebuffer.getHeight() - dialogHeight) / 2;
+                constexpr int cornerRadius = Dialogs::DIALOG_CORNER_RADIUS; // same card shape as every other modal
+                framebuffer.drawFilledRect(0, 0, framebuffer.getWidth(), framebuffer.getHeight(), Color(0, 0, 0, 130));
+                framebuffer.drawSoftShadow(dialogX, dialogY, dialogWidth, dialogHeight, cornerRadius);
+                framebuffer.drawFilledRoundedRect(dialogX, dialogY, dialogWidth, dialogHeight, cornerRadius,
+                                                  Colors::Panel);
+                framebuffer.drawRoundedRect(dialogX, dialogY, dialogWidth, dialogHeight, cornerRadius, Colors::Border,
+                                            1);
+                framebuffer.drawText(dialogX + 22, dialogY + 16, title, Colors::Text, TextStyle::Heading);
+                framebuffer.drawFilledRect(dialogX + cornerRadius, dialogY + headerH - 4,
+                                           dialogWidth - cornerRadius * 2, 2, Colors::Accent);
                 screen.touchButtons.clear();
-                int ry = y + headerH;
-                for (int i = 0; i < count; ++i)
+                int rectY = dialogY + headerH;
+                for (int index = 0; index < count; ++index)
                 {
-                    const bool disabled = (disabledMask >> i) & 1u;
-                    const bool selRow = (i == sel) && !disabled;
+                    const bool disabled = (disabledMask >> index) & 1u;
+                    const bool selRow = (index == selectedIndex) && !disabled;
                     if (selRow)
-                        fb.drawSelectionHighlight(x + 10, ry + 3, w - 20, rowH - 6);
-                    int tw, th;
-                    fb.measureText(items[i], tw, th, TextStyle::Body);
+                        framebuffer.drawSelectionHighlight(dialogX + 10, rectY + 3, dialogWidth - 20, rowH - 6);
+                    int textWidth, th;
+                    framebuffer.measureText(items[index], textWidth, th, TextStyle::Body);
                     const Color rowColor = disabled ? Colors::Border : (selRow ? Colors::Text : Colors::TextDim);
-                    fb.drawText(x + 28, ry + (rowH - th) / 2, items[i], rowColor, TextStyle::Body);
+                    framebuffer.drawText(dialogX + 28, rectY + (rowH - th) / 2, items[index], rowColor,
+                                         TextStyle::Body);
                     if (!disabled)
-                        screen.touchButtons.push_back({i, x + 10, ry, w - 20, rowH}); // greyed rows aren't tappable
-                    ry += rowH;
+                        // greyed rows aren't tappable
+                        screen.touchButtons.push_back({index, dialogX + 10, rectY, dialogWidth - 20, rowH});
+                    rectY += rowH;
                 }
             }
         }
 
-        void drawStorageActionMenu(TrainerViewScreen &screen, PKSEFramebuffer &fb)
+        void drawStorageActionMenu(TrainerViewScreen &screen, PKSEFramebuffer &framebuffer)
         {
-            const Pokemon::Pokemon *pk = screen.storageSlot(screen.menuPane, screen.menuBox, screen.menuSlot).get();
-            const std::string title = (pk && pk->speciesID() != 0)
-                                          ? Names::getDisplayName(pk->speciesID(), pk->form(), pk->species())
-                                          : "Pokémon";
-            static const char *const items[] = {"Move", "Edit", "Clone", "Release", "Cancel"};
+            const Pokemon::Pokemon *pokemon =
+                screen.storageSlot(screen.menuPane, screen.menuBox, screen.menuSlot).get();
+            const std::string title =
+                (pokemon && pokemon->speciesID() != 0)
+                    ? Names::getDisplayName(pokemon->speciesID(), pokemon->form(), pokemon->species())
+                    : "Pokémon";
+            static const char *const items[] = {"Move", "Edit", "Clone", "Release", "Find\u2026", "Cancel"};
             // A party-linked (LGPE) slot can be edited or cloned, but not moved or released -- grey those
             // two out. (Same lock rule as storageSlotLocked: save pane + a party member points here.)
             const bool locked = screen.menuPane == 0 &&
                                 screen.trainer.getPartyPosition(screen.menuBox, screen.menuSlot) > 0;
             const uint32_t disabled = locked ? ((1u << 0) | (1u << 3)) : 0u; // Move (0), Release (3)
-            drawPopupMenu(screen, fb, title, items, 5, screen.storageMenuIndex, disabled);
+            drawPopupMenu(screen, framebuffer, title, items, 6, screen.storageMenuIndex, disabled);
         }
 
         // Options for the block in hand. There is deliberately no "move" entry: a carried group is moved
         // by carrying it to the destination and pressing A, which is what makes placement positional.
-        void drawStorageGroupMenu(TrainerViewScreen &screen, PKSEFramebuffer &fb)
+        void drawStorageGroupMenu(TrainerViewScreen &screen, PKSEFramebuffer &framebuffer)
         {
-            const int n = screen.carriedCount();
-            const std::string title = std::to_string(n) + (n == 1 ? " in hand" : " Pokemon in hand");
+            const int count = screen.carriedCount();
+            const std::string title = std::to_string(count) + (count == 1 ? " in hand" : " Pokemon in hand");
             static const char *const items[] = {"Release all", "Put back where they came from", "Cancel"};
-            drawPopupMenu(screen, fb, title, items, 3, screen.groupMenuIndex);
+            drawPopupMenu(screen, framebuffer, title, items, 3, screen.groupMenuIndex);
         }
 
-        void drawStorageReleaseConfirm(TrainerViewScreen &screen, PKSEFramebuffer &fb)
+        void drawStorageReleaseConfirm(TrainerViewScreen &screen, PKSEFramebuffer &framebuffer)
         {
-            std::string msg;
+            std::string message;
             if (screen.releaseGroup)
             {
-                msg = "Release " + std::to_string(screen.carriedCount()) + " Pokémon?";
+                message = "Release " + std::to_string(screen.carriedCount()) + " Pokémon?";
             }
             else
             {
-                const Pokemon::Pokemon *pk = screen.storageSlot(screen.releasePane, screen.releaseBox, screen.releaseSlot).get();
-                const std::string who = (pk && pk->speciesID() != 0)
-                                            ? Names::getDisplayName(pk->speciesID(), pk->form(), pk->species())
-                                            : "this Pokémon";
-                msg = "Release " + who + "?";
+                const Pokemon::Pokemon *pokemon =
+                    screen.storageSlot(screen.releasePane, screen.releaseBox, screen.releaseSlot).get();
+                const std::string subjectName =
+                    (pokemon && pokemon->speciesID() != 0)
+                        ? Names::getDisplayName(pokemon->speciesID(), pokemon->form(), pokemon->species())
+                        : "this Pokémon";
+                message = "Release " + subjectName + "?";
             }
-            constexpr int w = 540, h = 226;
-            const int x = (fb.getWidth() - w) / 2;
-            const int y = (fb.getHeight() - h) / 2;
-            int cy = Dialogs::drawDialogFrame(fb, x, y, w, h, "Release", Colors::Red);
-            fb.drawText(x + 28, cy, msg, Colors::Text);
-            fb.drawText(x + 28, cy + 34, "This can't be undone.", Colors::TextDim, TextStyle::Caption);
+            constexpr int dialogWidth = 540, h = 226;
+            const int dialogX = (framebuffer.getWidth() - dialogWidth) / 2;
+            const int dialogY = (framebuffer.getHeight() - h) / 2;
+            int centerY =
+                Dialogs::drawDialogFrame(framebuffer, dialogX, dialogY, dialogWidth, h, "Release", Colors::Red);
+            framebuffer.drawText(dialogX + 28, centerY, message, Colors::Text);
+            framebuffer.drawText(dialogX + 28, centerY + 34, "This can't be undone.", Colors::TextDim,
+                                 TextStyle::Caption);
 
             // Buttons carry their glyph (B: Cancel, A: Release); Release stays red.
             screen.touchButtons.clear();
-            const int bw = 190, bh = TouchTargetMin, by = y + h - bh - 18;
-            const int relX = x + w - bw - 20;   // right = Release (id 1 -> A)
-            const int cancelX = relX - bw - 16; // left  = Cancel  (id 0 -> B)
-            drawGlyphButton(fb, cancelX, by, bw, bh, "B", "Cancel", Colors::PanelAlt);
-            screen.touchButtons.push_back({0, cancelX, by, bw, bh});
-            drawGlyphButton(fb, relX, by, bw, bh, "A", "Release", Colors::Red, Colors::White);
-            screen.touchButtons.push_back({1, relX, by, bw, bh});
+            const int boxWidth = 190, bh = TouchTargetMin, by = dialogY + h - bh - 18;
+            const int relX = dialogX + dialogWidth - boxWidth - 20;   // right = Release (id 1 -> A)
+            const int cancelX = relX - boxWidth - 16; // left  = Cancel  (id 0 -> B)
+            Dialogs::drawEditChoiceButton(screen, framebuffer, cancelX, by, boxWidth, bh, "B", "Cancel", 0,
+                                          Colors::PanelAlt);
+            Dialogs::drawEditChoiceButton(screen, framebuffer, relX, by, boxWidth, bh, "A", "Release", 1, Colors::Red,
+                                          Colors::White);
         }
 
         // Creator "Keep this new Pokemon?" confirm. Three glyph buttons (like the Edit Item dialog),
         // so each is one controller button rather than a Left/Right selector: B = Back (return to
         // editing), Y = Discard (remove it), A = Keep. ids 0 / 2 / 1 respectively.
-        void drawCreatorKeepConfirm(TrainerViewScreen &screen, PKSEFramebuffer &fb)
+        void drawCreatorKeepConfirm(TrainerViewScreen &screen, PKSEFramebuffer &framebuffer)
         {
-            constexpr int w = 540, h = 226;
-            const int x = (fb.getWidth() - w) / 2;
-            const int y = (fb.getHeight() - h) / 2;
-            int cy = Dialogs::drawDialogFrame(fb, x, y, w, h, "New Pokémon", Colors::Primary);
-            fb.drawText(x + 28, cy, "Keep this new Pokémon?", Colors::Text);
-            fb.drawText(x + 28, cy + 34, "Discard removes it; Back keeps editing.", Colors::TextDim, TextStyle::Caption);
+            constexpr int dialogWidth = 540, h = 226;
+            const int dialogX = (framebuffer.getWidth() - dialogWidth) / 2;
+            const int dialogY = (framebuffer.getHeight() - h) / 2;
+            int centerY =
+                Dialogs::drawDialogFrame(framebuffer, dialogX, dialogY, dialogWidth, h, "New Pokémon", Colors::Primary);
+            framebuffer.drawText(dialogX + 28, centerY, "Keep this new Pokémon?", Colors::Text);
+            framebuffer.drawText(dialogX + 28, centerY + 34, "Discard removes it; Back keeps editing.", Colors::TextDim,
+                                 TextStyle::Caption);
 
             screen.touchButtons.clear();
-            const int cbw = 160, cbh = TouchTargetMin, cby = y + h - cbh - 18;
-            drawGlyphButton(fb, x + 24, cby, cbw, cbh, "B", "Back", Colors::PanelAlt);
-            screen.touchButtons.push_back({0, x + 24, cby, cbw, cbh});
-            drawGlyphButton(fb, x + (w - cbw) / 2, cby, cbw, cbh, "Y", "Discard", Colors::PanelAlt);
-            screen.touchButtons.push_back({2, x + (w - cbw) / 2, cby, cbw, cbh});
-            drawGlyphButton(fb, x + w - 24 - cbw, cby, cbw, cbh, "A", "Keep", Colors::PanelAlt);
-            screen.touchButtons.push_back({1, x + w - 24 - cbw, cby, cbw, cbh});
+            const int choiceButtonWidth = 160, cbh = TouchTargetMin, cby = dialogY + h - cbh - 18;
+            Dialogs::drawEditChoiceButton(screen, framebuffer, dialogX + 24, cby, choiceButtonWidth, cbh, "B", "Back",
+                                          0, Colors::PanelAlt);
+            Dialogs::drawEditChoiceButton(screen, framebuffer, dialogX + (dialogWidth - choiceButtonWidth) / 2, cby,
+                                          choiceButtonWidth, cbh, "Y", "Discard", 2, Colors::PanelAlt);
+            Dialogs::drawEditChoiceButton(screen, framebuffer, dialogX + dialogWidth - 24 - choiceButtonWidth, cby,
+                                          choiceButtonWidth, cbh, "A", "Keep", 1, Colors::PanelAlt);
         }
 
-        void drawDetailsDiscardConfirm(TrainerViewScreen &screen, PKSEFramebuffer &fb)
+        void drawDetailsDiscardConfirm(TrainerViewScreen &screen, PKSEFramebuffer &framebuffer)
         {
             // Deliberately the same shape as the creator's Keep/Discard above: same three glyph
             // buttons in the same places, so leaving an edit page always looks and answers alike.
-            // What differs is the stakes -- here the mon already exists and only the EDITS are at
-            // risk, so the safe action (Save) sits on A where Keep sits for a new mon.
-            constexpr int w = 560, h = 226;
-            const int x = (fb.getWidth() - w) / 2;
-            const int y = (fb.getHeight() - h) / 2;
-            int cy = Dialogs::drawDialogFrame(fb, x, y, w, h, "Unsaved changes", Colors::Orange);
-            fb.drawText(x + 28, cy, "This Pokémon has unsaved changes.", Colors::Text);
-            fb.drawText(x + 28, cy + 34, "Discard loses them; Back keeps editing.",
+            // What differs is the stakes -- here the pokemon already exists and only the EDITS are at
+            // risk, so the safe action (Save) sits on A where Keep sits for a new pokemon.
+            constexpr int dialogWidth = 560, h = 226;
+            const int dialogX = (framebuffer.getWidth() - dialogWidth) / 2;
+            const int dialogY = (framebuffer.getHeight() - h) / 2;
+            int centerY = Dialogs::drawDialogFrame(framebuffer, dialogX, dialogY, dialogWidth, h, "Unsaved changes",
+                                                   Colors::Orange);
+            framebuffer.drawText(dialogX + 28, centerY, "This Pokémon has unsaved changes.", Colors::Text);
+            framebuffer.drawText(dialogX + 28, centerY + 34, "Discard loses them; Back keeps editing.",
                         Colors::TextDim, TextStyle::Caption);
 
             screen.touchButtons.clear();
-            const int cbw = 160, cbh = TouchTargetMin, cby = y + h - cbh - 18;
-            drawGlyphButton(fb, x + 24, cby, cbw, cbh, "B", "Back", Colors::PanelAlt);
-            screen.touchButtons.push_back({0, x + 24, cby, cbw, cbh});
-            drawGlyphButton(fb, x + (w - cbw) / 2, cby, cbw, cbh, "Y", "Discard", Colors::PanelAlt);
-            screen.touchButtons.push_back({2, x + (w - cbw) / 2, cby, cbw, cbh});
-            drawGlyphButton(fb, x + w - 24 - cbw, cby, cbw, cbh, "A", "Save", Colors::PanelAlt);
-            screen.touchButtons.push_back({1, x + w - 24 - cbw, cby, cbw, cbh});
+            const int choiceButtonWidth = 160, cbh = TouchTargetMin, cby = dialogY + h - cbh - 18;
+            Dialogs::drawEditChoiceButton(screen, framebuffer, dialogX + 24, cby, choiceButtonWidth, cbh, "B", "Back",
+                                          0, Colors::PanelAlt);
+            Dialogs::drawEditChoiceButton(screen, framebuffer, dialogX + (dialogWidth - choiceButtonWidth) / 2, cby,
+                                          choiceButtonWidth, cbh, "Y", "Discard", 2, Colors::PanelAlt);
+            Dialogs::drawEditChoiceButton(screen, framebuffer, dialogX + dialogWidth - 24 - choiceButtonWidth, cby,
+                                          choiceButtonWidth, cbh, "A", "Save", 1, Colors::PanelAlt);
+        }
+
+        void drawTradeEvolveChoice(TrainerViewScreen &screen, PKSEFramebuffer &framebuffer)
+        {
+            // WHICH POKEMON IT BECOMES. The held item is what the games use to choose, and it is
+            // not a condition on evolving here -- so when it names nothing and there is more than
+            // one destination, the only thing left to ask is the user. That is Clamperl holding
+            // neither a Deep Sea Tooth nor a Deep Sea Scale, and nothing else in any generation.
+            //
+            // A LIST, not a pair of lettered buttons: it is an element picker like the donor title
+            // picker beside it, and a list stays right if a later game ever adds a third row.
+            const Pokemon::Pokemon *pokemon = screen.detailsTargetPokemon();
+            if (!pokemon)
+                return;
+            const Pokemon::TradeEvolutionOffer offer = Pokemon::getTradeEvolutionOffer(*pokemon);
+            if (offer.candidateCount <= 0)
+                return;
+
+            constexpr int rowHeight = 46;
+            const int dialogWidth = 620, dialogHeight = 186 + offer.candidateCount * rowHeight;
+            const int dialogX = (framebuffer.getWidth() - dialogWidth) / 2;
+            const int dialogY = (framebuffer.getHeight() - dialogHeight) / 2;
+            const int contentY = Dialogs::drawDialogFrame(framebuffer, dialogX, dialogY, dialogWidth,
+                                                          dialogHeight, "Trade Evolve", Colors::Accent);
+            framebuffer.drawText(dialogX + 28, contentY, "It has two trade evolutions and is holding neither item.",
+                                 Colors::Text);
+            framebuffer.drawText(dialogX + 28, contentY + 30, "Choose which one it becomes.",
+                                 Colors::TextDim, TextStyle::Caption);
+
+            screen.touchButtons.clear();
+            for (int candidateIndex = 0; candidateIndex < offer.candidateCount; ++candidateIndex)
+            {
+                const Pokemon::TradeEvolution &becomes = offer.candidates[candidateIndex];
+                const int rowY = contentY + 64 + candidateIndex * rowHeight;
+                const bool isSelected = (candidateIndex == screen.tradeEvolveChoiceIndex);
+                if (isSelected)
+                {
+                    framebuffer.drawFilledRoundedRect(dialogX + 20, rowY, dialogWidth - 40, rowHeight - 6, 8,
+                                                      Colors::Selected);
+                    framebuffer.drawRoundedRect(dialogX + 20, rowY, dialogWidth - 40, rowHeight - 6, 8, Colors::Accent,
+                                                2);
+                }
+                framebuffer.drawText(dialogX + 34, rowY + 12,
+                                     Names::getDisplayName(becomes.destinationSpeciesId, becomes.destinationFormId,
+                                                           Trainer::getSpeciesName(becomes.destinationSpeciesId)),
+                                     isSelected ? Colors::Text : Colors::TextDim);
+                // THE ITEM THAT WOULD HAVE CHOSEN IT, named in the pokemon's own game -- Deep Sea
+                // Tooth is a different id in Gen 3 than it is from Gen 4 on. It says why these two
+                // rows exist, which the destination names alone do not.
+                const std::string chosenBy =
+                    std::string("with ") + Names::getItemNameFor(pokemon->getGameGroup(), becomes.requiredItemId);
+                int chosenByWidth = 0, chosenByHeight = 0;
+                framebuffer.measureText(chosenBy, chosenByWidth, chosenByHeight, TextStyle::Caption);
+                framebuffer.drawText(dialogX + dialogWidth - 34 - chosenByWidth, rowY + 15, chosenBy,
+                                     Colors::TextDim, TextStyle::Caption);
+                screen.touchButtons.push_back({candidateIndex, dialogX + 20, rowY, dialogWidth - 40, rowHeight - 6});
+            }
+        }
+
+        void drawTradeEvolveConfirm(TrainerViewScreen &screen, PKSEFramebuffer &framebuffer)
+        {
+            // Same three-button shape as the Save/Discard prompt above, so every choice on this
+            // page answers alike. A TRADE EVOLUTION FROM GEN 6 ON LEAVES A HANDLING TRAINER, and
+            // that residue is the only thing that says the trade happened -- so the choice is not
+            // cosmetic, and the dialog says which option is real and which is invented rather than
+            // leaving the user to guess.
+            constexpr int dialogWidth = 620, dialogHeight = 244;
+            const int dialogX = (framebuffer.getWidth() - dialogWidth) / 2;
+            const int dialogY = (framebuffer.getHeight() - dialogHeight) / 2;
+            const int centerY = Dialogs::drawDialogFrame(framebuffer, dialogX, dialogY, dialogWidth,
+                                                         dialogHeight, "Trade Evolve", Colors::Accent);
+            framebuffer.drawText(dialogX + 28, centerY, "This Pokémon evolves when it is traded.", Colors::Text);
+            framebuffer.drawText(dialogX + 28, centerY + 32,
+                                 "Its game records the other trainer, so PKSE needs one.",
+                                 Colors::TextDim, TextStyle::Caption);
+            framebuffer.drawText(dialogX + 28, centerY + 58,
+                                 "A save you own is a real trainer. Generated invents one.",
+                                 Colors::TextDim, TextStyle::Caption);
+
+            screen.touchButtons.clear();
+            const int choiceButtonWidth = 176, buttonHeight = TouchTargetMin;
+            const int buttonY = dialogY + dialogHeight - buttonHeight - 18;
+            Dialogs::drawEditChoiceButton(screen, framebuffer, dialogX + 24, buttonY, choiceButtonWidth,
+                                          buttonHeight, "B", "Cancel", 0, Colors::PanelAlt);
+            Dialogs::drawEditChoiceButton(screen, framebuffer, dialogX + (dialogWidth - choiceButtonWidth) / 2, buttonY,
+                                          choiceButtonWidth, buttonHeight, "Y", "Generate", 2, Colors::PanelAlt);
+            Dialogs::drawEditChoiceButton(screen, framebuffer, dialogX + dialogWidth - 24 - choiceButtonWidth, buttonY,
+                                          choiceButtonWidth, buttonHeight, "A", "Use a save", 1, Colors::PanelAlt);
+        }
+
+        void drawTradePartnerTitlePicker(TrainerViewScreen &screen, PKSEFramebuffer &framebuffer)
+        {
+            // A SHORT LIST, NOT THE SAVE PICKER'S GRID. The grid is a boot step choosing what to
+            // open; this is choosing one element out of a filtered handful, so it is a list in a
+            // dialog like every other element picker on this page.
+            const auto &candidates = screen.tradePartnerTitles.candidates;
+            constexpr int rowHeight = 46, maxVisibleRows = 6;
+            const int visibleRows = candidates.empty() ? 1
+                                    : (static_cast<int>(candidates.size()) < maxVisibleRows
+                                           ? static_cast<int>(candidates.size())
+                                           : maxVisibleRows);
+            const int dialogWidth = 620, dialogHeight = 150 + visibleRows * rowHeight;
+            const int dialogX = (framebuffer.getWidth() - dialogWidth) / 2;
+            const int dialogY = (framebuffer.getHeight() - dialogHeight) / 2;
+            const int contentY = Dialogs::drawDialogFrame(framebuffer, dialogX, dialogY, dialogWidth,
+                                                          dialogHeight, "Trade With", Colors::Accent);
+
+            screen.touchButtons.clear();
+            if (candidates.empty())
+            {
+                // An empty list is a real answer -- no other save on this console can trade with
+                // this Pokemon -- and saying so beats an empty panel, which reads as a failure.
+                framebuffer.drawText(dialogX + 28, contentY + 8,
+                                     "No other save on this console can trade with it.", Colors::TextDim);
+                return;
+            }
+
+            const int scroll = screen.tradePartnerTitles.scroll;
+            for (int visibleIndex = 0; visibleIndex < visibleRows; ++visibleIndex)
+            {
+                const int candidateIndex = scroll + visibleIndex;
+                if (candidateIndex >= static_cast<int>(candidates.size()))
+                    break;
+                const TrainerViewScreen::ConsoleSaveEntry &entry = candidates[candidateIndex];
+                const int rowY = contentY + visibleIndex * rowHeight;
+                const bool isSelected = (candidateIndex == screen.tradePartnerTitles.selectedIndex);
+                if (isSelected)
+                {
+                    framebuffer.drawFilledRoundedRect(dialogX + 20, rowY, dialogWidth - 40, rowHeight - 6, 8,
+                                                      Colors::Selected);
+                    framebuffer.drawRoundedRect(dialogX + 20, rowY, dialogWidth - 40, rowHeight - 6, 8, Colors::Accent,
+                                                2);
+                }
+                framebuffer.drawText(dialogX + 34, rowY + 12, entry.label,
+                                     isSelected ? Colors::Text : Colors::TextDim);
+                // WHOSE SAVE IT IS, always. Two users on one console may own the same title, and
+                // without the name those rows are the same string twice.
+                int userNameWidth = 0, userNameHeight = 0;
+                framebuffer.measureText(entry.userName, userNameWidth, userNameHeight, TextStyle::Caption);
+                framebuffer.drawText(dialogX + dialogWidth - 34 - userNameWidth, rowY + 15, entry.userName,
+                                     Colors::TextDim, TextStyle::Caption);
+                screen.touchButtons.push_back({candidateIndex, dialogX + 20, rowY, dialogWidth - 40, rowHeight - 6});
+            }
         }
 
         namespace
@@ -554,64 +795,125 @@ namespace UI
             // Frame + Cancel/Continue buttons shared by the two lossy-move notices. Only the chrome is
             // shared; each dialog writes its own copy, because they warn about different losses.
             // Returns the content Y to start drawing body text at.
-            int beginMoveConfirm(PKSEFramebuffer &fb,
-                                 const char *title, Color accent, int &x, int &y, int w, int h)
+            int beginMoveConfirm(PKSEFramebuffer &framebuffer, const char *title, Color accent, int &dialogX,
+                                 int &dialogY, int dialogWidth, int dialogHeight)
             {
-                x = (fb.getWidth() - w) / 2;
-                y = (fb.getHeight() - h) / 2;
-                return Dialogs::drawDialogFrame(fb, x, y, w, h, title, accent);
+                dialogX = (framebuffer.getWidth() - dialogWidth) / 2;
+                dialogY = (framebuffer.getHeight() - dialogHeight) / 2;
+                return Dialogs::drawDialogFrame(framebuffer, dialogX, dialogY, dialogWidth, dialogHeight, title,
+                                                accent);
             }
 
-            void endMoveConfirm(TrainerViewScreen &screen, PKSEFramebuffer &fb, int x, int y, int w, int h)
+            void endMoveConfirm(TrainerViewScreen &screen, PKSEFramebuffer &framebuffer, int dialogX, int dialogY,
+                                int dialogWidth, int dialogHeight)
             {
                 // On-button glyphs (B: Cancel, A: Continue) -- a single button each, no Left/Right selector.
                 screen.touchButtons.clear();
-                const int bw = 190, bh = TouchTargetMin, by = y + h - bh - 18;
-                const int contX = x + w - bw - 20;   // right = Continue (id 1 -> A)
-                const int cancelX = contX - bw - 16; // left  = Cancel   (id 0 -> B)
-                drawGlyphButton(fb, cancelX, by, bw, bh, "B", "Cancel", Colors::PanelAlt);
-                screen.touchButtons.push_back({0, cancelX, by, bw, bh});
-                drawGlyphButton(fb, contX, by, bw, bh, "A", "Continue", Colors::PanelAlt);
-                screen.touchButtons.push_back({1, contX, by, bw, bh});
+                const int boxWidth = 190, bh = TouchTargetMin, by = dialogY + dialogHeight - bh - 18;
+                const int contX = dialogX + dialogWidth - boxWidth - 20;   // right = Continue (id 1 -> A)
+                const int cancelX = contX - boxWidth - 16; // left  = Cancel   (id 0 -> B)
+                Dialogs::drawEditChoiceButton(screen, framebuffer, cancelX, by, boxWidth, bh, "B", "Cancel", 0,
+                                              Colors::PanelAlt);
+                Dialogs::drawEditChoiceButton(screen, framebuffer, contX, by, boxWidth, bh, "A", "Continue", 1,
+                                              Colors::PanelAlt);
             }
         }
 
-        // FireRed/LeafGreen. Down-converting rebuilds the PID to keep the nature (Gen 3 has no nature
-        // field), which is destructive and cannot be undone -- so this is never gated by the Move
-        // warning setting, and it supersedes the Let's Go notice when a move is both.
-        void drawGen3ConvertConfirm(TrainerViewScreen &screen, PKSEFramebuffer &fb)
+        // Gen 3 (FireRed/LeafGreen or Ruby/Sapphire/Emerald). Down-converting rebuilds the PID to keep
+        // the nature (Gen 3 has no nature field), which is destructive and cannot be undone -- so this
+        // supersedes the other two notices when a move matches more than one. Like them it is shown
+        // only while the Move warning setting is on.
+        //
+        // It also carries the ONE loss Gen 3 cannot reconstruct. A nickname has the species name to
+        // fall back on, but a trainer's name is theirs, and Gen 3's character tables have no Hangul
+        // and no CJK -- so a Korean or Chinese OT cannot be written there and the field arrives
+        // blank. That is said HERE rather than in a notice of its own, because this setting gates
+        // every bank transfer warning and a second dialog outside it could not be turned off.
+        void drawGen3ConvertConfirm(TrainerViewScreen &screen, PKSEFramebuffer &framebuffer)
         {
-            constexpr int w = 580, h = 300;
-            int x = 0, y = 0;
-            int cy = beginMoveConfirm(fb, "Convert to Gen 3?", Colors::Warning, x, y, w, h);
-            fb.drawText(x + 28, cy, "Gen 3 has no nature field, so the PID is", Colors::Text);
-            fb.drawText(x + 28, cy + 28, "regenerated to preserve it — the result", Colors::Text);
-            fb.drawText(x + 28, cy + 56, "may read as illegal, and nickname, ribbons", Colors::Text);
-            fb.drawText(x + 28, cy + 84, "and held item are dropped. Can't be undone.", Colors::Text);
-            fb.drawText(x + 28, cy + 124, "Not recommended. Continue anyway?", Colors::TextDim, TextStyle::Caption);
-            endMoveConfirm(screen, fb, x, y, w, h);
+            const bool originalTrainerNameDropped = screen.pendingMoveDropsOriginalTrainerName();
+            const int dialogHeight = originalTrainerNameDropped ? 356 : 300;
+            constexpr int dialogWidth = 580;
+            int dialogX = 0, y = 0;
+            int centerY = beginMoveConfirm(framebuffer, "Convert to Gen 3?", Colors::Warning,
+                                           dialogX, y, dialogWidth, dialogHeight);
+            framebuffer.drawText(dialogX + 28, centerY, "Gen 3 has no nature field, so the PID is", Colors::Text);
+            framebuffer.drawText(dialogX + 28, centerY + 28, "regenerated to preserve it — the result", Colors::Text);
+            framebuffer.drawText(dialogX + 28, centerY + 56, "may read as illegal, and ribbons and the", Colors::Text);
+            framebuffer.drawText(dialogX + 28, centerY + 84, "held item are dropped. Can't be undone.", Colors::Text);
+            centerY += 124;
+            if (originalTrainerNameDropped)
+            {
+                framebuffer.drawText(dialogX + 28, centerY, "Gen 3 can't write this Trainer's name, so",
+                                     Colors::Warning);
+                framebuffer.drawText(dialogX + 28, centerY + 28, "the OT will be left blank.", Colors::Warning);
+                centerY += 56;
+            }
+            framebuffer.drawText(dialogX + 28, centerY, "Not recommended. Continue anyway?", Colors::TextDim,
+                                 TextStyle::Caption);
+            endMoveConfirm(screen, framebuffer, dialogX, y, dialogWidth, dialogHeight);
         }
 
-        // Let's Go. Stat training is reset, which the player can earn back -- so this one obeys the
-        // Move warning setting.
-        void drawLgpeTransferConfirm(TrainerViewScreen &screen, PKSEFramebuffer &fb)
+        // Gen 1/2. Poke Transporter is the only way out of those games and it REBUILDS the Pokemon:
+        // IVs are rerolled, a PID is invented, partial EXP is lost and the ability becomes the hidden
+        // one. None of that can be undone, so it outranks the Let's Go notice when a move matches both;
+        // like the other two it is shown only while the Move warning setting is on. It is also where
+        // the user is told that the origin title is a guess,
+        // because neither a Gen 1/2 record nor the save it came from holds a version byte.
+        void drawVirtualConsoleTransferConfirm(TrainerViewScreen &screen, PKSEFramebuffer &framebuffer)
         {
-            constexpr int w = 580, h = 300;
-            int x = 0, y = 0;
-            int cy = beginMoveConfirm(fb, "Let's Go transfer", Colors::Primary, x, y, w, h);
-            fb.drawText(x + 28, cy, "Moving to/from Let's Go resets AVs/EVs", Colors::Text);
-            fb.drawText(x + 28, cy + 28, "to 0, removes held items, and drops any", Colors::Text);
-            fb.drawText(x + 28, cy + 56, "move it can't legally learn.", Colors::Text);
-            fb.drawText(x + 28, cy + 96, "Continue with this transfer?", Colors::TextDim, TextStyle::Caption);
-            endMoveConfirm(screen, fb, x, y, w, h);
+            const bool originIsGuess = screen.pendingTransferOriginIsGuess();
+            const int dialogHeight = originIsGuess ? 356 : 300;
+            constexpr int dialogWidth = 600;
+            int dialogX = 0, y = 0;
+            int centerY = beginMoveConfirm(framebuffer, "Poké Transporter", Colors::Warning,
+                                           dialogX, y, dialogWidth, dialogHeight);
+            framebuffer.drawText(dialogX + 28, centerY, "Leaving Gen 1/2 rerolls the IVs, invents a", Colors::Text);
+            framebuffer.drawText(dialogX + 28, centerY + 28, "PID, drops partial EXP and Stat Experience,",
+                                 Colors::Text);
+            framebuffer.drawText(dialogX + 28, centerY + 56, "and grants the hidden ability. Can't be undone.",
+                                 Colors::Text);
+            centerY += 96;
+            if (originIsGuess)
+            {
+                // Naming the title we are about to stamp matters more than saying "unknown": the
+                // user can see whether it matches the game the Pokemon actually came from, and
+                // nothing else in PKSE will ever be able to tell them.
+                const std::string originName =
+                    Enums::getGameVersionName(screen.pendingTransferOriginVersion());
+                framebuffer.drawText(dialogX + 28, centerY, "Nothing records which title it came from, so",
+                                     Colors::Warning);
+                framebuffer.drawText(dialogX + 28, centerY + 28, "its origin is set to " + originName + ".",
+                                     Colors::Warning);
+                centerY += 62;
+            }
+            framebuffer.drawText(dialogX + 28, centerY, "Continue with this transfer?", Colors::TextDim,
+                                 TextStyle::Caption);
+            endMoveConfirm(screen, framebuffer, dialogX, y, dialogWidth, dialogHeight);
         }
 
-        void drawStorageExitConfirm(TrainerViewScreen &screen, PKSEFramebuffer &fb)
+        // Let's Go. Stat training is reset, which the player can earn back -- the least severe of the
+        // three, so it is shown only when neither of the others applies.
+        void drawLgpeTransferConfirm(TrainerViewScreen &screen, PKSEFramebuffer &framebuffer)
+        {
+            constexpr int dialogWidth = 580, h = 300;
+            int dialogX = 0, y = 0;
+            int centerY =
+                beginMoveConfirm(framebuffer, "Let's Go transfer", Colors::Primary, dialogX, y, dialogWidth, h);
+            framebuffer.drawText(dialogX + 28, centerY, "Moving to/from Let's Go resets AVs/EVs", Colors::Text);
+            framebuffer.drawText(dialogX + 28, centerY + 28, "to 0, removes held items, and drops any", Colors::Text);
+            framebuffer.drawText(dialogX + 28, centerY + 56, "move it can't legally learn.", Colors::Text);
+            framebuffer.drawText(dialogX + 28, centerY + 96, "Continue with this transfer?", Colors::TextDim,
+                                 TextStyle::Caption);
+            endMoveConfirm(screen, framebuffer, dialogX, y, dialogWidth, h);
+        }
+
+        void drawStorageExitConfirm(TrainerViewScreen &screen, PKSEFramebuffer &framebuffer)
         {
             // The bank has unsaved changes; ask before leaving (HOME-style). Bank saving is separate
             // from the game (X) save, so this is the bank's own persistence decision.
             static const char *const items[] = {"Save & Exit", "Discard changes", "Cancel"};
-            drawPopupMenu(screen, fb, "Save bank changes?", items, 3, screen.storageExitConfirmIndex);
+            drawPopupMenu(screen, framebuffer, "Save bank changes?", items, 3, screen.storageExitConfirmIndex);
         }
     }
 }
