@@ -364,7 +364,8 @@ namespace UI
         const HidAnalogStickState stick = padGetStickPos(&pad, 0);
         u64 buttonsDown = controllerNavigation.apply(
             padGetButtonsDown(&pad), padGetButtons(&pad), stick.x, stick.y,
-            HidNpadButton_Up, HidNpadButton_Down, HidNpadButton_Left, HidNpadButton_Right)
+            HidNpadButton_Up, HidNpadButton_Down, HidNpadButton_Left, HidNpadButton_Right,
+            HidNpadButton_L | HidNpadButton_R)
             | navTouchButton(touch);
 
         // A tap recorded earlier fires once its selection has actually been on screen. See armTap().
