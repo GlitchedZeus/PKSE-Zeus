@@ -1,7 +1,7 @@
 #ifndef UI_NAVIGATION_REPEAT_H
 #define UI_NAVIGATION_REPEAT_H
 
-#include <cstdint>
+#include "Utils/NXTypes.h"
 
 namespace UI
 {
@@ -18,10 +18,10 @@ namespace UI
         static constexpr int INITIAL_DELAY_FRAMES = 18;
         static constexpr int REPEAT_INTERVAL_FRAMES = 4;
 
-        std::uint64_t apply(std::uint64_t pressed, std::uint64_t held,
-                            std::uint64_t repeatableMask)
+        u64 apply(u64 pressed, u64 held,
+                            u64 repeatableMask)
         {
-            const std::uint64_t repeatableHeld = held & repeatableMask;
+            const u64 repeatableHeld = held & repeatableMask;
             if (repeatableHeld == 0 || repeatableHeld != heldDirections)
             {
                 heldDirections = repeatableHeld;
@@ -45,14 +45,14 @@ namespace UI
         }
 
     private:
-        std::uint64_t heldDirections = 0;
+        u64 heldDirections = 0;
         int heldFrames = 0;
     };
 
     struct AnalogNavigationSample
     {
-        std::uint64_t down = 0;
-        std::uint64_t held = 0;
+        u64 down = 0;
+        u64 held = 0;
     };
 
     /**
@@ -70,10 +70,10 @@ namespace UI
         static constexpr int AXIS_SWITCH_MARGIN = 4000;
 
         AnalogNavigationSample sample(int x, int y,
-                                      std::uint64_t up, std::uint64_t down,
-                                      std::uint64_t left, std::uint64_t right)
+                                      u64 up, u64 down,
+                                      u64 left, u64 right)
         {
-            const std::uint64_t previous = heldDirection;
+            const u64 previous = heldDirection;
             const Candidate candidate = dominantCandidate(x, y, up, down, left, right);
 
             if (heldDirection != 0)
@@ -105,15 +105,15 @@ namespace UI
     private:
         struct Candidate
         {
-            std::uint64_t direction = 0;
+            u64 direction = 0;
             int strength = 0;
         };
 
         static int magnitude(int value) { return value < 0 ? -value : value; }
 
         static Candidate dominantCandidate(int x, int y,
-                                           std::uint64_t up, std::uint64_t down,
-                                           std::uint64_t left, std::uint64_t right)
+                                           u64 up, u64 down,
+                                           u64 left, u64 right)
         {
             const int horizontal = magnitude(x);
             const int vertical = magnitude(y);
@@ -124,9 +124,9 @@ namespace UI
             return {};
         }
 
-        static int directionStrength(std::uint64_t direction, int x, int y,
-                                     std::uint64_t up, std::uint64_t down,
-                                     std::uint64_t left, std::uint64_t right)
+        static int directionStrength(u64 direction, int x, int y,
+                                     u64 up, u64 down,
+                                     u64 left, u64 right)
         {
             if (direction == left)
                 return -x;
@@ -139,7 +139,7 @@ namespace UI
             return 0;
         }
 
-        std::uint64_t heldDirection = 0;
+        u64 heldDirection = 0;
     };
 
     /**
@@ -149,14 +149,15 @@ namespace UI
     class ControllerNavigation
     {
     public:
-        std::uint64_t apply(std::uint64_t digitalPressed, std::uint64_t digitalHeld,
+        u64 apply(u64 digitalPressed, u64 digitalHeld,
                             int stickX, int stickY,
-                            std::uint64_t up, std::uint64_t down,
-                            std::uint64_t left, std::uint64_t right)
+                            u64 up, u64 down,
+                            u64 left, u64 right,
+                            u64 extraRepeatableMask = 0)
         {
             const AnalogNavigationSample analog =
                 analogNavigation.sample(stickX, stickY, up, down, left, right);
-            const std::uint64_t mask = up | down | left | right;
+            const u64 mask = up | down | left | right | extraRepeatableMask;
             return navigationRepeat.apply(digitalPressed | analog.down,
                                           digitalHeld | analog.held, mask);
         }
