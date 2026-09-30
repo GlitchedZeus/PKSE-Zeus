@@ -3383,9 +3383,25 @@ namespace UI
     void TrainerViewScreen::update(const PadState &pad, const TouchInput &touch)
     {
         const HidAnalogStickState stick = padGetStickPos(&pad, 0);
+
+        // L/R repeat only while they are navigation. On the Pokemon details page L randomizes IVs
+        // and R opens legality details, so those action bindings deliberately remain edge-triggered.
+        const bool fileBrowserNavigation =
+            fileBrowser.active && !pksmImport.previewActive && !pksmImport.resultActive;
+        const bool viewShoulderNavigation =
+            !pksmImportActive() && !details.active &&
+            (selectedMode == ViewMode::Storage || selectedMode == ViewMode::Items ||
+             selectedMode == ViewMode::Boxes);
+        const u64 repeatableShoulders =
+            (pickerActive || fileBrowserNavigation || statEdit.dialogActive ||
+             itemEditDialogActive || viewShoulderNavigation)
+                ? (HidNpadButton_L | HidNpadButton_R)
+                : 0;
+
         u64 buttonsDown = controllerNavigation.apply(
             padGetButtonsDown(&pad), padGetButtons(&pad), stick.x, stick.y,
-            HidNpadButton_Up, HidNpadButton_Down, HidNpadButton_Left, HidNpadButton_Right)
+            HidNpadButton_Up, HidNpadButton_Down, HidNpadButton_Left, HidNpadButton_Right,
+            repeatableShoulders)
             | navTouchButton(touch); // nav-bar badges are tappable
 
         // A dialog tap recorded earlier fires once its press has actually been on screen. See
