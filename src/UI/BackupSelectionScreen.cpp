@@ -99,7 +99,11 @@ namespace UI
 
     void BackupSelectionScreen::update(const PadState &pad, const TouchInput &touch)
     {
-        u64 buttonsDown = padGetButtonsDown(&pad) | navTouchButton(touch); // nav-bar badges are tappable
+        const HidAnalogStickState stick = padGetStickPos(&pad, 0);
+        u64 buttonsDown = controllerNavigation.apply(
+            padGetButtonsDown(&pad), padGetButtons(&pad), stick.x, stick.y,
+            HidNpadButton_Up, HidNpadButton_Down, HidNpadButton_Left, HidNpadButton_Right)
+            | navTouchButton(touch); // nav-bar badges are tappable
 
         // A tap recorded earlier fires once its press has actually been on screen. See armTap().
         if (pendingTapButton != 0 && --pendingTapFrames <= 0)

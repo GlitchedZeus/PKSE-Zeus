@@ -361,7 +361,12 @@ namespace UI
     {
         // A tap on a nav-bar badge becomes that button's press, so every handler below is
         // reached identically whether the user pressed the button or tapped its on-screen badge.
-        u64 buttonsDown = padGetButtonsDown(&pad) | navTouchButton(touch);
+        const HidAnalogStickState stick = padGetStickPos(&pad, 0);
+        u64 buttonsDown = controllerNavigation.apply(
+            padGetButtonsDown(&pad), padGetButtons(&pad), stick.x, stick.y,
+            HidNpadButton_Up, HidNpadButton_Down, HidNpadButton_Left, HidNpadButton_Right,
+            HidNpadButton_L | HidNpadButton_R)
+            | navTouchButton(touch);
 
         // A tap recorded earlier fires once its selection has actually been on screen. See armTap().
         if (pendingTapButton != 0 && --pendingTapFrames <= 0)

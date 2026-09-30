@@ -10,6 +10,7 @@
 
 #include "Globals.h" // g_injectToGameSave gates the save-destination picker
 #include "UI/UIScreen.h"
+#include "UI/NavigationRepeat.h"
 #include "UI/PKSEFramebuffer.h"
 #include "UI/ListSearch.h" // the shared search box every list uses
 #include "Trainer/Bank.h"
@@ -152,6 +153,7 @@ namespace UI
         AccountUid userUid;
         bool goBack = false;
         bool exitRequested = false; // True when user presses + to close app
+        ControllerNavigation controllerNavigation;
 
         // This block is public + mutable BY DESIGN: the panels/dialogs/modals read and write it
         // directly (immediate-mode UI). The biggest cohesive clusters are grouped into nested structs

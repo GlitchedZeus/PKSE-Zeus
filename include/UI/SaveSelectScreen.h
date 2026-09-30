@@ -8,6 +8,7 @@
 
 #include "Enums/GameVersion.h" // a tile remembers the version its folder and label were built from
 #include "UI/UIScreen.h"
+#include "UI/NavigationRepeat.h"
 #include "UI/PKSEFramebuffer.h"
 #include "UI/Common.h"
 #include "UI/Dialogs/FileBrowserDialog.h"
@@ -66,6 +67,8 @@ namespace UI
         const std::vector<UserEntry> &allUsers() const { return users; }
 
     private:
+        ControllerNavigation controllerNavigation;
+
         struct HitRect
         {
             int hitX, hitY, hitWidth, hitHeight, entryIndex;
