@@ -6,6 +6,7 @@
 #include "UI/Common.h"
 #include "UI/ScreenChrome.h"
 #include "UI/ListSearch.h"
+#include "UI/Dialogs/KeyboardDialog.h"
 #include "UI/SystemIcons.h"
 #include "UI/TouchInput.h"
 #include "Enums/GameVersion.h"
@@ -173,8 +174,7 @@ namespace UI
         if (R_FAILED(resultCode))
         {
             char messageBuffer[112];
-            snprintf(messageBuffer, sizeof(messageBuffer), "SaveSelect: cannot read save space %d (rc=0x%08X)", spaceId,
-                     (unsigned)resultCode);
+            snprintf(messageBuffer, sizeof(messageBuffer), "SaveSelect: cannot read save space %d (rc=0x%08X)", spaceId, (unsigned)resultCode);
             logInfoToFile(messageBuffer);
             return false;
         }
@@ -204,9 +204,7 @@ namespace UI
                     if (gameVersion == GameVersion::Invalid)
                         continue;
                     char probeBuffer[128];
-                    snprintf(probeBuffer, sizeof(probeBuffer),
-                             "SaveSelect: %016llX unknown id, identified by content as %s",
-                             (unsigned long long)titleId, getGameVersionName(gameVersion).c_str());
+                    snprintf(probeBuffer, sizeof(probeBuffer), "SaveSelect: %016llX unknown id, identified by content as %s", (unsigned long long)titleId, getGameVersionName(gameVersion).c_str());
                     logInfoToFile(probeBuffer);
                 }
 
@@ -226,8 +224,7 @@ namespace UI
                     continue;
 
                 char messageBuffer[128];
-                snprintf(messageBuffer, sizeof(messageBuffer), "SaveSelect: %s (%016llX) -> listed",
-                         getGameVersionName(gameVersion).c_str(), (unsigned long long)titleId);
+                snprintf(messageBuffer, sizeof(messageBuffer), "SaveSelect: %s (%016llX) -> listed", getGameVersionName(gameVersion).c_str(), (unsigned long long)titleId);
                 logInfoToFile(messageBuffer);
 
                 TitleEntry titleEntry;
@@ -263,9 +260,7 @@ namespace UI
         // Counts make a missing title diagnosable from the log alone: how many saves the console
         // reported in total, how many belong to this user, and how many were Pokemon titles.
         char summary[192];
-        snprintf(summary, sizeof(summary),
-                 "SaveSelect: %d save entries on console, %d for %s, %d Pokemon titles listed",
-                 scanned, forUser, user.name.c_str(), (int)user.titles.size());
+        snprintf(summary, sizeof(summary), "SaveSelect: %d save entries on console, %d for %s, %d Pokemon titles listed", scanned, forUser, user.name.c_str(), (int)user.titles.size());
         logInfoToFile(summary);
     }
 
@@ -488,8 +483,7 @@ namespace UI
             int saveCount = (int)u->titles.size();
             std::string subtitleText =
                 std::to_string(saveCount) + (saveCount == 1 ? " Pokémon save" : " Pokémon saves");
-            framebuffer.drawText(nameX, avY + 6 + nameLineHeight + 4, subtitleText, Colors::TextDim,
-                                 TextStyle::Caption);
+            framebuffer.drawText(nameX, avY + 6 + nameLineHeight + 4, subtitleText, Colors::TextDim, TextStyle::Caption);
         }
 
         // Per-user switcher chips (only when more than one account).
@@ -521,8 +515,7 @@ namespace UI
             const char *message = "No Pokémon saves found for this user";
             int messageWidth, mh;
             framebuffer.measureText(message, messageWidth, mh, TextStyle::Body);
-            framebuffer.drawText((framebuffer.getWidth() - messageWidth) / 2, GRID_Y + 120, message, Colors::TextDim,
-                                 TextStyle::Body);
+            framebuffer.drawText((framebuffer.getWidth() - messageWidth) / 2, GRID_Y + 120, message, Colors::TextDim, TextStyle::Body);
         }
         else
         {
@@ -547,8 +540,7 @@ namespace UI
                 bool selectedIndex = (index == titleIndex);
 
                 framebuffer.drawSoftShadow(tileX, tileY, TILE_W, TILE_H, 16);
-                framebuffer.drawFilledRoundedRect(tileX, tileY, TILE_W, TILE_H, 16,
-                                                  selectedIndex ? Colors::PanelAlt : Colors::Panel);
+                framebuffer.drawFilledRoundedRect(tileX, tileY, TILE_W, TILE_H, 16, selectedIndex ? Colors::PanelAlt : Colors::Panel);
                 if (selectedIndex)
                     framebuffer.drawRoundedRect(tileX, tileY, TILE_W, TILE_H, 16, Colors::Primary, 3);
                 else
@@ -583,12 +575,12 @@ namespace UI
         // the browser card, is two visible rows of controller badges saying different things about the same
         // dialog. The bar is chosen here and drawn once, the same way TrainerViewScreen's instruction chain
         // does it.
-        if (fileBrowser.active)
-            drawNavBar(framebuffer,
-                       "Up/Down: Move  |  L/R: Page  |  A: Open  |  Y: Search  |  X: All Files  |  B: Up / Close");
+        if (const Dialogs::KeyboardState *keyboard = Dialogs::activeKeyboard())
+            drawNavBar(framebuffer, keyboard->navHint());
+        else if (fileBrowser.active)
+            drawNavBar(framebuffer, "Up/Down: Move  |  L/R: Page  |  A: Open  |  Y: Search  |  X: All Files  |  B: Up / Close");
         else if (users.size() > 1)
-            drawNavBar(framebuffer,
-                       "A: Select  |  L/R: Switch User  |  Y: Open Save File  |  +: Exit");
+            drawNavBar(framebuffer, "A: Select  |  L/R: Switch User  |  Y: Open Save File  |  +: Exit");
         else
             drawNavBar(framebuffer, "A: Select  |  Y: Open Save File  |  +: Exit");
 
@@ -604,9 +596,8 @@ namespace UI
         // their ROMs, and PKSE's own backup tree is the other likely home; the browser falls
         // through to the first of these that exists.
         fileBrowser.open("Open a Save File",
-                         {"sdmc:/PKSE/saves/", "sdmc:/PKSE/", "sdmc:/roms/", "sdmc:/retroarch/saves/",
-                          "sdmc:/emulators/", "sdmc:/"},
-                         Save::saveFileExtensions(), Save::saveFileExactNames());
+            {"sdmc:/PKSE/saves/", "sdmc:/PKSE/", "sdmc:/roms/", "sdmc:/retroarch/saves/", "sdmc:/emulators/", "sdmc:/"},
+            Save::saveFileExtensions(), Save::saveFileExactNames());
         logEventToFile("OPENSAVE action=BROWSE dir=\"" + fileBrowser.directory + "\"");
     }
 
@@ -630,8 +621,9 @@ namespace UI
         if (buttonsDown & HidNpadButton_Y)
         {
             // Search. refresh() re-lists the folder through the query, so an empty
-            // query -- the shared "clear" gesture -- simply lists it all again.
-            if (fileBrowser.search.promptForQuery("Files"))
+            // query -- the shared "clear" gesture -- simply lists it all again. Not while typing:
+            // refresh() re-reads the folder off the card, which a big folder cannot do per key.
+            if (fileBrowser.search.promptForQuery("Files", ListSearch::FilterTiming::OnAccept))
             {
                 fileBrowser.returnTo.clear();
                 fileBrowser.refresh();
@@ -692,8 +684,7 @@ namespace UI
             // a save that is the right size but not recognised is a different problem from a file
             // that was never a save.
             fileBrowser.status = "Not a save PKSE can open (" + std::to_string(length) + " bytes).";
-            logEventToFile("OPENSAVE action=PICK file=\"" + picked + "\" size=" + std::to_string(length) +
-                           " result=UNRECOGNISED");
+            logEventToFile("OPENSAVE action=PICK file=\"" + picked + "\" size=" + std::to_string(length) + " result=UNRECOGNISED");
             return;
         }
 
