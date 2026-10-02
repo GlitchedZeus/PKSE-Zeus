@@ -5,6 +5,7 @@
 #include "UI/SaveSelectScreen.h"
 #include "UI/BackupSelectionScreen.h"
 #include "UI/TrainerViewScreen.h"
+#include "UI/Dialogs/KeyboardDialog.h"
 #include "Utils/HelperUtilities.h"
 #include "Utils/Logger.h"
 #include "Utils/FileUtilities.h"
@@ -21,10 +22,64 @@ namespace UI
         padConfigureInput(1, HidNpadStyleSet_NpadStandard);
         padInitializeDefault(&pad);
         hidInitializeTouchScreen(); // enable the touchscreen alongside the gamepad
+        Utils::setKeyboardPresenter([this](const Utils::KeyboardRequest &request) { return runKeyboard(request); });
     }
 
     UIManager::~UIManager()
     {
+        Utils::setKeyboardPresenter(nullptr);
+    }
+
+    void UIManager::drawKeyboardBackdrop()
+    {
+        if (keyboardBackdrop)
+            keyboardBackdrop->draw(framebuffer);
+        else
+            framebuffer.clear(Colors::Background);
+    }
+
+    // The keyboard is modal, so it runs a loop of its own inside the update() that asked for it --
+    // but it keeps DRAWING that screen underneath, which is the point of it: a search filters its list
+    // as the query is typed. `pad` and `touch` are the same objects the screen loops read, so the edge
+    // state carries straight across in both directions -- the press that raised the prompt is not
+    // typed into it, and the press that answers it does not reach the screen.
+    Utils::KeyboardResult UIManager::runKeyboard(const Utils::KeyboardRequest &request)
+    {
+        Dialogs::KeyboardState keyboard;
+        keyboard.open(request, framebuffer.getWidth(), framebuffer.getHeight());
+        Dialogs::setActiveKeyboard(&keyboard);
+        while (!keyboard.finished && appletMainLoop())
+        {
+            padUpdate(&pad);
+            touch.update();
+            keyboard.update(pad, touch);
+            if (keyboard.finished)
+                break;
+            drawKeyboardBackdrop();
+            Dialogs::drawKeyboard(keyboard, framebuffer);
+            framebuffer.flush();
+        }
+        Dialogs::setActiveKeyboard(nullptr);
+
+        // Hold the screen until whatever answered the prompt is let go. The screen reads the same pad
+        // the moment this returns, and a + still held from OK would otherwise reach it as a press --
+        // which closes the app. Stick directions are not waited on: a drifting stick never lets go.
+        constexpr u64 answeringButtons = HidNpadButton_A | HidNpadButton_B | HidNpadButton_X | HidNpadButton_Y |
+                                         HidNpadButton_L | HidNpadButton_R | HidNpadButton_ZL | HidNpadButton_ZR |
+                                         HidNpadButton_Plus | HidNpadButton_Minus | HidNpadButton_Up |
+                                         HidNpadButton_Down | HidNpadButton_Left | HidNpadButton_Right;
+        constexpr int releaseFrameLimit = 60;
+        for (int releaseFrame = 0; releaseFrame < releaseFrameLimit && appletMainLoop(); ++releaseFrame)
+        {
+            drawKeyboardBackdrop();
+            framebuffer.flush();
+            padUpdate(&pad);
+            touch.update();
+            const bool buttonStillMoving = ((padGetButtons(&pad) | padGetButtonsUp(&pad)) & answeringButtons) != 0;
+            if (!buttonStillMoving && !touch.isDown() && !touch.justReleased())
+                break;
+        }
+        return keyboard.result();
     }
 
     void UIManager::run()
@@ -46,6 +101,7 @@ namespace UI
         {
             padUpdate(&pad);
             touch.update();
+            keyboardBackdrop = &selectScreen;
             selectScreen.update(pad, touch);
             // Captured every frame while the picker is up: it re-enumerates on a user switch, and
             // this is the only place the whole console's save list exists.
@@ -89,8 +145,7 @@ namespace UI
         running = false; // + pressed -> exit the app
     }
 
-    void UIManager::handleBackupSelection(AccountUid userUid, u64 titleId, const std::string &titleName,
-                                          const std::string &titleFolder)
+    void UIManager::handleBackupSelection(AccountUid userUid, u64 titleId, const std::string &titleName, const std::string &titleFolder)
     {
         BackupSelectionScreen backupScreen(titleId, titleName, titleFolder);
         framebuffer.startFade();
@@ -99,6 +154,7 @@ namespace UI
         {
             padUpdate(&pad);
             touch.update();
+            keyboardBackdrop = &backupScreen;
             backupScreen.update(pad, touch);
             backupScreen.draw(framebuffer);
             framebuffer.drawFadeOverlay();
@@ -135,8 +191,7 @@ namespace UI
         }
     }
 
-    void UIManager::handleTrainerView(AccountUid userUid, u64 titleId, const std::string &titleName,
-                                      const std::string &backupDir, bool loadedFromCart)
+    void UIManager::handleTrainerView(AccountUid userUid, u64 titleId, const std::string &titleName, const std::string &backupDir, bool loadedFromCart)
     {
         logInfoToFile("Loading save from", backupDir.c_str());
 
@@ -146,7 +201,7 @@ namespace UI
 
         // Use std::visit to extract reference and create TrainerViewScreen
         std::visit([&](auto &trainer)
-                   {
+        {
             TrainerViewScreen trainerScreen(trainer, titleName, backupDir, titleId, userUid, loadedFromCart);
             // The trade-partner picker offers the OTHER saves on this console -- captured while
             // the picker screen had them enumerated, because walking save data is fs/ns work the
@@ -157,6 +212,7 @@ namespace UI
             while (appletMainLoop() && !trainerScreen.shouldExit() && !trainerScreen.hasRequestedExit()) {
                 padUpdate(&pad);
                 touch.update();
+                keyboardBackdrop = &trainerScreen;
                 trainerScreen.update(pad, touch);
                 trainerScreen.draw(framebuffer);
                 framebuffer.drawFadeOverlay();
@@ -166,7 +222,8 @@ namespace UI
             // If user pressed + to exit app, stop running
             if (trainerScreen.hasRequestedExit()) {
                 running = false;
-            } }, trainerVariant);
+            }
+        }, trainerVariant);
     }
 
     // A save the user pointed at on the SD card, rather than one belonging to an installed title.
@@ -210,6 +267,7 @@ namespace UI
         {
             padUpdate(&pad);
             touch.update();
+            keyboardBackdrop = &trainerScreen;
             trainerScreen.update(pad, touch);
             trainerScreen.draw(framebuffer);
             framebuffer.drawFadeOverlay();

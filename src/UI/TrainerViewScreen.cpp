@@ -33,6 +33,7 @@
 #include "UI/Dialogs/StatEditDialog.h"
 #include "UI/Dialogs/FileBrowserDialog.h"
 #include "UI/Dialogs/PKSMImportDialog.h"
+#include "UI/Dialogs/KeyboardDialog.h"
 #include "UI/Modals/PokemonDetailsModal.h"
 #include "Utils/HelperUtilities.h"
 #include "Utils/Keyboard.h"
@@ -955,6 +956,9 @@ namespace UI
     // still advertising Edit / Ribbons / Save while none of them did anything.
     std::string TrainerViewScreen::overlayNavHint() const
     {
+        // The keyboard is drawn over whatever raised it and takes every press until it closes.
+        if (const Dialogs::KeyboardState *keyboard = Dialogs::activeKeyboard())
+            return keyboard->navHint();
         if (pksmImport.resultActive)
             return "A: OK";
         if (pksmImport.previewActive)
@@ -3546,12 +3550,16 @@ namespace UI
             const int page = 12;
 
             // Y opens the search box. Accepting an empty query clears the
-            // filter, which is why no second key is needed to get out of one.
+            // filter, which is why no second key is needed to get out of one. The rows re-filter
+            // with every key, and each pass starts from the value that was selected before typing,
+            // so a cancel -- which puts the old query back -- lands on it again.
             if (buttonsDown & HidNpadButton_Y)
             {
                 const int selectedValueBeforeSearch = pickerSelectedValue();
-                if (pickerSearch.promptForQuery(Dialogs::pickerTitle(pickerKind)))
-                    rebuildPickerFilter(selectedValueBeforeSearch);
+                const auto refilterRows = [this, selectedValueBeforeSearch]
+                { rebuildPickerFilter(selectedValueBeforeSearch); };
+                pickerSearch.promptForQuery(Dialogs::pickerTitle(pickerKind), ListSearch::FilterTiming::WhileTyping,
+                                            refilterRows);
                 return;
             }
 
@@ -5599,7 +5607,10 @@ namespace UI
                     releaseConfirmActive = true;
                     break;
                 case 4: // Find -> highlight matching Pokemon and jump to the first
-                    if (storageSearch.promptForQuery("Box and Bank"))
+                    // The grids highlight straight from the query, so matches light up while it is
+                    // typed. The cursor jumps only once it is accepted: jumping per key would move
+                    // the bank's current box, which is an unsaved bank change.
+                    if (storageSearch.promptForQuery("Box and Bank", ListSearch::FilterTiming::WhileTyping))
                     {
                         if (storageSearch.isFiltering() && !jumpToFirstStorageMatch())
                             postStatus("No Pokemon here match that search.", 240);
@@ -5879,10 +5890,18 @@ namespace UI
                 // below may also listen for Y -- Add Item did, and was unreachable until it moved.
                 if (buttonsDown & HidNpadButton_Y)
                 {
-                    if (itemSearch.promptForQuery("Items"))
+                    const int itemIndexBeforeSearch = selectedItemIndex;
+                    const int pageBeforeSearch = currentPage;
+                    const auto resetCursor = [this]
                     {
                         selectedItemIndex = 0;
                         currentPage = 0;
+                    };
+                    // Typing resets the cursor as it goes; a query that ends where it began puts it back.
+                    if (!itemSearch.promptForQuery("Items", ListSearch::FilterTiming::WhileTyping, resetCursor))
+                    {
+                        selectedItemIndex = itemIndexBeforeSearch;
+                        currentPage = pageBeforeSearch;
                     }
                     return;
                 }

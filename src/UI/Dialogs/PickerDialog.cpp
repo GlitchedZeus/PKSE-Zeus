@@ -1,7 +1,9 @@
+#include <algorithm>
 #include <cstdint>
 #include <string>
 
 #include "UI/Dialogs/PickerDialog.h"
+#include "UI/Dialogs/KeyboardDialog.h"
 #include "UI/TrainerViewScreen.h"
 #include "UI/Common.h"
 #include "UI/ScreenChrome.h" // drawScrollbar
@@ -262,7 +264,12 @@ namespace UI
 
             // Scrollable list window centered on the selection.
             const int rowH = 40;
-            const int listTop = py + 60 + listSearchBoxHeight() + 4, listBottom = py + ph - 48;
+            const int listTop = py + 60 + listSearchBoxHeight() + 4;
+            int listBottom = py + ph - 48;
+            // While the keyboard types this picker's query, only the rows above it can be seen -- so
+            // the window centres the selection among those, not among rows hidden under the keyboard.
+            if (const KeyboardState *keyboard = activeKeyboard())
+                listBottom = std::min(listBottom, keyboard->cardTop() - 8);
             int visible = (listBottom - listTop) / rowH;
             if (visible < 1)
                 visible = 1;

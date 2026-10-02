@@ -1,8 +1,10 @@
 #include "Utils/Keyboard.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#include <utility>
 #include <vector>
 
 #include <switch.h>
@@ -18,13 +20,14 @@ namespace Utils
         // truncate any non-ASCII name mid-sequence.
         constexpr int BYTES_PER_CHARACTER = 4;
 
+        KeyboardPresenter g_keyboardPresenter;
+
         /**
          * Common swkbd plumbing. Returns false on cancel OR on applet failure -- the caller treats
          * both as "no change", which is right either way: a failed applet must not be allowed to
          * overwrite the user's existing text with an empty string.
          */
-        bool runKeyboard(SwkbdType type, const std::string &header, const std::string &guide,
-                         const std::string &initial, int maxChars, std::string &out)
+        bool runKeyboard(SwkbdType type, const std::string &header, const std::string &guide, const std::string &initial, int maxChars, std::string &out)
         {
             if (maxChars <= 0)
                 return false;
@@ -61,11 +64,32 @@ namespace Utils
         }
     }
 
-    KeyboardResult promptText(const std::string &header, const std::string &guide,
-                              const std::string &initial, int maxChars)
+    void setKeyboardPresenter(KeyboardPresenter presenter) { g_keyboardPresenter = std::move(presenter); }
+
+    KeyboardResult promptSystemText(const std::string &header, const std::string &guide,
+                                    const std::string &initial, int maxChars)
     {
         KeyboardResult result;
         result.accepted = runKeyboard(SwkbdType_QWERTY, header, guide, initial, maxChars, result.text);
+        if (!result.accepted)
+            result.text.clear();
+        return result;
+    }
+
+    KeyboardResult promptText(const std::string &header, const std::string &guide, const std::string &initial, int maxChars, const std::function<void(const std::string &)> &textChanged)
+    {
+        if (!g_keyboardPresenter)
+            return promptSystemText(header, guide, initial, maxChars);
+        if (maxChars <= 0)
+            return KeyboardResult{};
+
+        KeyboardRequest request;
+        request.header = header;
+        request.guide = guide;
+        request.initialText = initial;
+        request.maxChars = maxChars;
+        request.textChanged = textChanged;
+        KeyboardResult result = g_keyboardPresenter(request);
         if (!result.accepted)
             result.text.clear();
         return result;
@@ -80,11 +104,28 @@ namespace Utils
         // Width the field to the largest value that is actually allowed, so the keypad can't be
         // used to type a number the caller would only have to reject afterwards.
         const int digits = static_cast<int>(std::to_string(std::max(std::abs(minValue), std::abs(maxValue))).size());
+        const std::string range = std::to_string(minValue) + " - " + std::to_string(maxValue);
 
         std::string text;
-        if (!runKeyboard(SwkbdType_NumPad, header, std::to_string(minValue) + " - " + std::to_string(maxValue),
-                         std::to_string(initial), digits, text))
+        if (g_keyboardPresenter)
+        {
+            KeyboardRequest request;
+            request.header = header;
+            request.guide = range;
+            request.initialText = std::to_string(initial);
+            request.digitsOnly = true;
+            request.allowNegative = minValue < 0;
+            // The sign takes a character of its own.
+            request.maxChars = digits + (request.allowNegative ? 1 : 0);
+            const KeyboardResult typed = g_keyboardPresenter(request);
+            if (!typed.accepted)
+                return result;
+            text = typed.text;
+        }
+        else if (!runKeyboard(SwkbdType_NumPad, header, range, std::to_string(initial), digits, text))
+        {
             return result;
+        }
 
         // An empty field is a deliberate "no change" rather than 0 -- otherwise cancelling by
         // clearing the field would silently zero an item count.
