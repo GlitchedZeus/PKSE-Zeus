@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <span>
 #include <string>
@@ -37,10 +38,13 @@ namespace Trainer::PokemonFile
         {
             const char *extension;
             GameVersion group;
-            size_t storedSize;
-            size_t partySize;
+            size_t shortSize;
+            size_t longSize;
         };
 
+        // Gen 1/2 use the two sizes for Japanese/international single-entry lists. Later formats use
+        // them for stored/party records. The extension chooses the entity format; the length chooses
+        // the valid representation inside that format.
         constexpr FormatSpec FORMAT_SPECS[] = {
             {".pk1", GameVersion::RBY, Pokemon::SIZE_1JLIST, Pokemon::SIZE_1ULIST},
             {".pk2", GameVersion::GSC, Pokemon::SIZE_2JLIST, Pokemon::SIZE_2ULIST},
@@ -65,25 +69,22 @@ namespace Trainer::PokemonFile
                 return {};
 
             std::string result = path.substr(dot);
-            std::transform(result.begin(), result.end(), result.begin(), [](unsigned char value) {
-                return static_cast<char>(std::tolower(value));
-            });
+            std::transform(result.begin(), result.end(), result.begin(),
+                           [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
             return result;
         }
 
         const FormatSpec *specForExtension(const std::string &extension)
         {
             for (const FormatSpec &spec : FORMAT_SPECS)
-            {
                 if (extension == spec.extension)
                     return &spec;
-            }
             return nullptr;
         }
 
         bool sizeAllowed(const FormatSpec &spec, size_t byteCount) noexcept
         {
-            return byteCount == spec.storedSize || byteCount == spec.partySize;
+            return byteCount == spec.shortSize || byteCount == spec.longSize;
         }
 
         bool fileExists(const std::string &path)
@@ -92,14 +93,17 @@ namespace Trainer::PokemonFile
             return stat(path.c_str(), &info) == 0;
         }
 
-        std::unique_ptr<Pokemon::Pokemon> parseUnchecked(
-            std::span<const std::byte> bytes, const std::string &fileName, std::string *error)
+        std::unique_ptr<Pokemon::Pokemon> parseUnchecked(std::span<const std::byte> bytes,
+                                                         const std::string &fileName,
+                                                         std::string *error)
         {
             const std::string extension = lowerExtension(fileName);
             const FormatSpec *spec = specForExtension(extension);
             if (!spec)
             {
-                if (error) *error = "unsupported Pokemon file extension: " + extension;
+                if (error)
+                    *error = extension.empty() ? "Pokemon file has no supported extension"
+                                               : "unsupported Pokemon file extension: " + extension;
                 return nullptr;
             }
             if (!sizeAllowed(*spec, bytes.size()))
@@ -107,9 +111,9 @@ namespace Trainer::PokemonFile
                 if (error)
                 {
                     *error = "wrong byte size for " + extension + ": expected " +
-                             std::to_string(spec->storedSize);
-                    if (spec->partySize != spec->storedSize)
-                        *error += " or " + std::to_string(spec->partySize);
+                             std::to_string(spec->shortSize);
+                    if (spec->longSize != spec->shortSize)
+                        *error += " or " + std::to_string(spec->longSize);
                     *error += ", got " + std::to_string(bytes.size());
                 }
                 return nullptr;
@@ -211,11 +215,11 @@ namespace Trainer::PokemonFile
         std::string safeSpeciesName(const Pokemon::Pokemon &pokemon)
         {
             std::string name = pokemon.species() ? pokemon.species() : "Pokemon";
-            for (char &ch : name)
+            for (char &character : name)
             {
-                const unsigned char value = static_cast<unsigned char>(ch);
-                if (!std::isalnum(value) && ch != '-' && ch != '_')
-                    ch = '_';
+                const unsigned char value = static_cast<unsigned char>(character);
+                if (!std::isalnum(value) && character != '-' && character != '_')
+                    character = '_';
             }
             while (!name.empty() && name.back() == '_')
                 name.pop_back();
@@ -232,6 +236,11 @@ namespace Trainer::PokemonFile
         return values;
     }
 
+    bool supportsFileName(const std::string &fileName)
+    {
+        return specForExtension(lowerExtension(fileName)) != nullptr;
+    }
+
     LoadResult parse(std::span<const std::byte> bytes, const std::string &fileName)
     {
         std::string error;
@@ -239,6 +248,8 @@ namespace Trainer::PokemonFile
         if (!pokemon)
             return {nullptr, std::move(error)};
 
+        // The parser accepting bytes is not enough: prove that the entity can go back through PKSE's
+        // native serializer and decode to the same decrypted record before it is allowed into the Bank.
         std::string roundTripError;
         const std::vector<std::byte> native = serialize(*pokemon, &roundTripError);
         if (native.empty())
@@ -254,10 +265,10 @@ namespace Trainer::PokemonFile
         if (!raw)
             return {nullptr, "could not read Pokemon file"};
 
-        const auto bytes = std::span<const std::byte>(
-            reinterpret_cast<const std::byte *>(raw), byteCount);
+        const auto bytes = std::span<const std::byte>(reinterpret_cast<const std::byte *>(raw), byteCount);
         LoadResult result = parse(bytes, path);
-        delete[] raw;
+        // readAllBytes() allocates with malloc(); pairing it with delete[] is undefined behaviour.
+        std::free(raw);
         return result;
     }
 
@@ -298,7 +309,7 @@ namespace Trainer::PokemonFile
 
         std::vector<std::byte> native(copy->getDataSize());
         std::memcpy(native.data(), encrypted, native.size());
-        delete[] encrypted;
+        delete[] encrypted; // PKSE encryption helpers explicitly return new[] buffers.
 
         std::string verifyError;
         auto roundTripped = parseUnchecked(native, extension, &verifyError);
@@ -385,11 +396,12 @@ namespace Trainer::PokemonFile
             return false;
         }
 
+        // Verify the actual bytes that reached the SD card before the temporary file is promoted.
         size_t verifySize = 0;
         uint8_t *verifyRaw = Utils::readAllBytes(temporary.c_str(), &verifySize);
         const bool verified = verifyRaw && verifySize == native.size() &&
                               std::memcmp(verifyRaw, native.data(), native.size()) == 0;
-        delete[] verifyRaw;
+        std::free(verifyRaw); // readAllBytes() uses malloc().
         if (!verified)
         {
             std::remove(temporary.c_str());
