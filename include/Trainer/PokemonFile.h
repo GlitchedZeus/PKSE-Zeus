@@ -28,6 +28,9 @@ namespace Trainer
         /// (Stadium, Colosseum/XD, Battle Revolution and Ranch).
         const std::vector<std::string> &extensions();
 
+        /// True when `fileName` ends in one of the native extensions above (case-insensitive).
+        bool supportsFileName(const std::string &fileName);
+
         /// Parse one native Pokemon entity. The extension selects the entity format and the size is
         /// validated before any format parser sees the bytes. The result is also checked for structural
         /// validity and native encrypt/decrypt round-trip fidelity.
