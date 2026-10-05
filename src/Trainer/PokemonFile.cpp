@@ -1,0 +1,410 @@
+#include "Trainer/PokemonFile.h"
+
+#include <algorithm>
+#include <cctype>
+#include <cstdio>
+#include <cstring>
+#include <span>
+#include <string>
+#include <sys/stat.h>
+#include <vector>
+
+#include "Encryption/Encryption3FRLG.h"
+#include "Encryption/Encryption4HGSS.h"
+#include "Encryption/Encryption5B2W2.h"
+#include "Encryption/Encryption6ORAS.h"
+#include "Encryption/Encryption7LGPE.h"
+#include "Encryption/Encryption7USUM.h"
+#include "Encryption/Encryption8BDSP.h"
+#include "Encryption/Encryption8LA.h"
+#include "Encryption/Encryption8SWSH.h"
+#include "Encryption/Encryption9LZA.h"
+#include "Encryption/Encryption9SV.h"
+#include "Enums/GameVersion.h"
+#include "Globals.h"
+#include "Pokemon/Pokemon1RBY.h"
+#include "Pokemon/Pokemon2GSC.h"
+#include "Trainer/Bank.h"
+#include "Utils/FileUtilities.h"
+
+namespace Trainer::PokemonFile
+{
+    namespace
+    {
+        using Enums::GameVersion;
+
+        struct FormatSpec
+        {
+            const char *extension;
+            GameVersion group;
+            size_t storedSize;
+            size_t partySize;
+        };
+
+        constexpr FormatSpec FORMAT_SPECS[] = {
+            {".pk1", GameVersion::RBY, Pokemon::SIZE_1JLIST, Pokemon::SIZE_1ULIST},
+            {".pk2", GameVersion::GSC, Pokemon::SIZE_2JLIST, Pokemon::SIZE_2ULIST},
+            {".pk3", GameVersion::FRLG, Encryption::SIZE_STORED3_FRLG, Encryption::SIZE_PARTY3_FRLG},
+            {".pk4", GameVersion::HGSS, Encryption::SIZE_STORED4_HGSS, Encryption::SIZE_PARTY4_HGSS},
+            {".pk5", GameVersion::B2W2, Encryption::SIZE_STORED5_B2W2, Encryption::SIZE_PARTY5_B2W2},
+            {".pk6", GameVersion::ORAS, Encryption::SIZE_STORED6_ORAS, Encryption::SIZE_PARTY6_ORAS},
+            {".pk7", GameVersion::USUM, Encryption::SIZE_STORED7_USUM, Encryption::SIZE_PARTY7_USUM},
+            {".pb7", GameVersion::GG, Encryption::SIZE_STORED7_LGPE, Encryption::SIZE_PARTY7_LGPE},
+            {".pk8", GameVersion::SWSH, Encryption::SIZE_STORED8_SWSH, Encryption::SIZE_PARTY8_SWSH},
+            {".pb8", GameVersion::BDSP, Encryption::SIZE_STORED8_BDSP, Encryption::SIZE_PARTY8_BDSP},
+            {".pa8", GameVersion::PLA, Encryption::SIZE_STORED8_LA, Encryption::SIZE_PARTY8_LA},
+            {".pk9", GameVersion::SV, Encryption::SIZE_STORED9_SV, Encryption::SIZE_PARTY9_SV},
+            {".pa9", GameVersion::ZA, Encryption::SIZE_STORED9_LZA, Encryption::SIZE_PARTY9_LZA},
+        };
+
+        std::string lowerExtension(const std::string &path)
+        {
+            const size_t slash = path.find_last_of("/\\");
+            const size_t dot = path.find_last_of('.');
+            if (dot == std::string::npos || (slash != std::string::npos && dot < slash))
+                return {};
+
+            std::string result = path.substr(dot);
+            std::transform(result.begin(), result.end(), result.begin(), [](unsigned char value) {
+                return static_cast<char>(std::tolower(value));
+            });
+            return result;
+        }
+
+        const FormatSpec *specForExtension(const std::string &extension)
+        {
+            for (const FormatSpec &spec : FORMAT_SPECS)
+            {
+                if (extension == spec.extension)
+                    return &spec;
+            }
+            return nullptr;
+        }
+
+        bool sizeAllowed(const FormatSpec &spec, size_t byteCount) noexcept
+        {
+            return byteCount == spec.storedSize || byteCount == spec.partySize;
+        }
+
+        bool fileExists(const std::string &path)
+        {
+            struct stat info{};
+            return stat(path.c_str(), &info) == 0;
+        }
+
+        std::unique_ptr<Pokemon::Pokemon> parseUnchecked(
+            std::span<const std::byte> bytes, const std::string &fileName, std::string *error)
+        {
+            const std::string extension = lowerExtension(fileName);
+            const FormatSpec *spec = specForExtension(extension);
+            if (!spec)
+            {
+                if (error) *error = "unsupported Pokemon file extension: " + extension;
+                return nullptr;
+            }
+            if (!sizeAllowed(*spec, bytes.size()))
+            {
+                if (error)
+                {
+                    *error = "wrong byte size for " + extension + ": expected " +
+                             std::to_string(spec->storedSize);
+                    if (spec->partySize != spec->storedSize)
+                        *error += " or " + std::to_string(spec->partySize);
+                    *error += ", got " + std::to_string(bytes.size());
+                }
+                return nullptr;
+            }
+
+            auto pokemon = Bank::makePokemon(spec->group, bytes);
+            if (!pokemon || pokemon->speciesID() == 0)
+            {
+                if (error) *error = "file does not contain an occupied Pokemon record";
+                return nullptr;
+            }
+            if (!pokemon->isStructurallyValid())
+            {
+                if (error) *error = "Pokemon record failed structural/checksum validation";
+                return nullptr;
+            }
+            if (pokemon->getDataSize() != bytes.size())
+            {
+                if (error) *error = "Pokemon parser changed the native record size";
+                return nullptr;
+            }
+
+            if (error) error->clear();
+            return pokemon;
+        }
+
+        std::byte *encryptNative(const Pokemon::Pokemon &pokemon)
+        {
+            const auto data = pokemon.getData();
+            switch (pokemon.getGameGroup())
+            {
+            case GameVersion::RBY:
+            case GameVersion::GSC:
+            {
+                auto *result = new std::byte[data.size()];
+                std::memcpy(result, data.data(), data.size());
+                return result;
+            }
+            case GameVersion::FRLG:
+            case GameVersion::RSE:
+                return Encryption::encryptArray3FRLG(data);
+            case GameVersion::DP:
+            case GameVersion::PT:
+            case GameVersion::HGSS:
+                return Encryption::encryptArray4HGSS(data);
+            case GameVersion::BW:
+            case GameVersion::B2W2:
+                return Encryption::encryptArray5B2W2(data);
+            case GameVersion::XY:
+            case GameVersion::ORAS:
+                return Encryption::encryptArray6ORAS(data);
+            case GameVersion::SM:
+            case GameVersion::USUM:
+                return Encryption::encryptArray7USUM(data);
+            case GameVersion::GG:
+                return Encryption::encryptArray7LGPE(data, pokemon.encryptionConstant());
+            case GameVersion::SWSH:
+                return Encryption::encryptArray8SWSH(data, pokemon.encryptionConstant());
+            case GameVersion::BDSP:
+                return Encryption::encryptArray8BDSP(data, pokemon.encryptionConstant());
+            case GameVersion::PLA:
+                return Encryption::encryptArray8LA(data, pokemon.encryptionConstant());
+            case GameVersion::SV:
+                return Encryption::encryptArray9SV(data, pokemon.encryptionConstant());
+            case GameVersion::ZA:
+                return Encryption::encryptArray9LZA(data, pokemon.encryptionConstant());
+            default:
+                return nullptr;
+            }
+        }
+
+        std::string extensionForGroup(GameVersion group)
+        {
+            switch (group)
+            {
+            case GameVersion::RBY: return ".pk1";
+            case GameVersion::GSC: return ".pk2";
+            case GameVersion::FRLG:
+            case GameVersion::RSE: return ".pk3";
+            case GameVersion::DP:
+            case GameVersion::PT:
+            case GameVersion::HGSS: return ".pk4";
+            case GameVersion::BW:
+            case GameVersion::B2W2: return ".pk5";
+            case GameVersion::XY:
+            case GameVersion::ORAS: return ".pk6";
+            case GameVersion::SM:
+            case GameVersion::USUM: return ".pk7";
+            case GameVersion::GG: return ".pb7";
+            case GameVersion::SWSH: return ".pk8";
+            case GameVersion::BDSP: return ".pb8";
+            case GameVersion::PLA: return ".pa8";
+            case GameVersion::SV: return ".pk9";
+            case GameVersion::ZA: return ".pa9";
+            default: return {};
+            }
+        }
+
+        std::string safeSpeciesName(const Pokemon::Pokemon &pokemon)
+        {
+            std::string name = pokemon.species() ? pokemon.species() : "Pokemon";
+            for (char &ch : name)
+            {
+                const unsigned char value = static_cast<unsigned char>(ch);
+                if (!std::isalnum(value) && ch != '-' && ch != '_')
+                    ch = '_';
+            }
+            while (!name.empty() && name.back() == '_')
+                name.pop_back();
+            return name.empty() ? "Pokemon" : name;
+        }
+    }
+
+    const std::vector<std::string> &extensions()
+    {
+        static const std::vector<std::string> values = {
+            ".pk1", ".pk2", ".pk3", ".pk4", ".pk5", ".pk6", ".pk7",
+            ".pb7", ".pk8", ".pb8", ".pa8", ".pk9", ".pa9",
+        };
+        return values;
+    }
+
+    LoadResult parse(std::span<const std::byte> bytes, const std::string &fileName)
+    {
+        std::string error;
+        auto pokemon = parseUnchecked(bytes, fileName, &error);
+        if (!pokemon)
+            return {nullptr, std::move(error)};
+
+        std::string roundTripError;
+        const std::vector<std::byte> native = serialize(*pokemon, &roundTripError);
+        if (native.empty())
+            return {nullptr, "native round-trip failed: " + roundTripError};
+
+        return {std::move(pokemon), {}};
+    }
+
+    LoadResult load(const std::string &path)
+    {
+        size_t byteCount = 0;
+        uint8_t *raw = Utils::readAllBytes(path.c_str(), &byteCount);
+        if (!raw)
+            return {nullptr, "could not read Pokemon file"};
+
+        const auto bytes = std::span<const std::byte>(
+            reinterpret_cast<const std::byte *>(raw), byteCount);
+        LoadResult result = parse(bytes, path);
+        delete[] raw;
+        return result;
+    }
+
+    std::vector<std::byte> serialize(const Pokemon::Pokemon &pokemon, std::string *error)
+    {
+        const std::string extension = extensionFor(pokemon);
+        const FormatSpec *spec = specForExtension(extension);
+        if (!spec)
+        {
+            if (error) *error = "Pokemon entity format has no supported native extension";
+            return {};
+        }
+        if (!sizeAllowed(*spec, pokemon.getDataSize()))
+        {
+            if (error) *error = "Pokemon entity size does not match its native file format";
+            return {};
+        }
+
+        auto copy = pokemon.clone();
+        if (!copy)
+        {
+            if (error) *error = "Pokemon entity does not support cloning";
+            return {};
+        }
+        copy->refreshChecksum();
+        if (!copy->isStructurallyValid())
+        {
+            if (error) *error = "Pokemon entity is not structurally valid after checksum refresh";
+            return {};
+        }
+
+        std::byte *encrypted = encryptNative(*copy);
+        if (!encrypted)
+        {
+            if (error) *error = "Pokemon entity has no native serializer";
+            return {};
+        }
+
+        std::vector<std::byte> native(copy->getDataSize());
+        std::memcpy(native.data(), encrypted, native.size());
+        delete[] encrypted;
+
+        std::string verifyError;
+        auto roundTripped = parseUnchecked(native, extension, &verifyError);
+        if (!roundTripped)
+        {
+            if (error) *error = "export verification failed: " + verifyError;
+            return {};
+        }
+        if (roundTripped->getDataSize() != copy->getDataSize() ||
+            std::memcmp(roundTripped->getData().data(), copy->getData().data(), copy->getDataSize()) != 0)
+        {
+            if (error) *error = "export verification changed Pokemon bytes after native reparse";
+            return {};
+        }
+
+        if (error) error->clear();
+        return native;
+    }
+
+    std::string extensionFor(const Pokemon::Pokemon &pokemon)
+    {
+        return extensionForGroup(pokemon.getGameGroup());
+    }
+
+    std::string defaultExportPath(const Pokemon::Pokemon &pokemon)
+    {
+        const std::string extension = extensionFor(pokemon);
+        if (extension.empty())
+            return {};
+
+        const std::string directory = BASE_SAVE_DIRECTORY + "/exports";
+        char identity[9]{};
+        const uint32_t value = pokemon.pid() != 0 ? pokemon.pid() : pokemon.id32();
+        std::snprintf(identity, sizeof(identity), "%08X", static_cast<unsigned int>(value));
+
+        const std::string stem = directory + "/" + std::to_string(pokemon.speciesID()) + "-" +
+                                 safeSpeciesName(pokemon) + "-" + identity;
+        std::string path = stem + extension;
+        for (unsigned int suffix = 2; fileExists(path) && suffix < 10000; ++suffix)
+            path = stem + "-" + std::to_string(suffix) + extension;
+        return fileExists(path) ? std::string{} : path;
+    }
+
+    bool write(const Pokemon::Pokemon &pokemon, const std::string &path, std::string *error)
+    {
+        if (path.empty())
+        {
+            if (error) *error = "export path is empty";
+            return false;
+        }
+        if (fileExists(path))
+        {
+            if (error) *error = "export path already exists";
+            return false;
+        }
+
+        std::string serializeError;
+        const std::vector<std::byte> native = serialize(pokemon, &serializeError);
+        if (native.empty())
+        {
+            if (error) *error = serializeError;
+            return false;
+        }
+
+        mkdir(BASE_SAVE_DIRECTORY.c_str(), 0777); // ignore EEXIST
+        const std::string exportDirectory = BASE_SAVE_DIRECTORY + "/exports";
+        mkdir(exportDirectory.c_str(), 0777); // ignore EEXIST
+
+        const std::string temporary = path + ".tmp";
+        FILE *file = std::fopen(temporary.c_str(), "wb");
+        if (!file)
+        {
+            if (error) *error = "could not open temporary export file";
+            return false;
+        }
+
+        const size_t written = std::fwrite(native.data(), 1, native.size(), file);
+        const int flushResult = std::fflush(file);
+        const int closeResult = std::fclose(file);
+        if (written != native.size() || flushResult != 0 || closeResult != 0)
+        {
+            std::remove(temporary.c_str());
+            if (error) *error = "could not write complete Pokemon export";
+            return false;
+        }
+
+        size_t verifySize = 0;
+        uint8_t *verifyRaw = Utils::readAllBytes(temporary.c_str(), &verifySize);
+        const bool verified = verifyRaw && verifySize == native.size() &&
+                              std::memcmp(verifyRaw, native.data(), native.size()) == 0;
+        delete[] verifyRaw;
+        if (!verified)
+        {
+            std::remove(temporary.c_str());
+            if (error) *error = "Pokemon export failed disk read-back verification";
+            return false;
+        }
+
+        if (std::rename(temporary.c_str(), path.c_str()) != 0)
+        {
+            std::remove(temporary.c_str());
+            if (error) *error = "could not promote verified Pokemon export";
+            return false;
+        }
+
+        if (error) error->clear();
+        return true;
+    }
+}
