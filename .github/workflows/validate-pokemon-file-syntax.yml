@@ -1,0 +1,49 @@
+name: Validate native Pokemon file syntax
+
+on:
+  push:
+    branches:
+      - feature/pokemon-file-import-export
+
+permissions:
+  contents: write
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/pokemon-file-import-export
+          fetch-depth: 0
+
+      - name: Run source contract check
+        run: python3 tools/check_pokemon_file_contract.py
+
+      - name: Pull pinned devkitA64 toolchain
+        run: docker pull devkitpro/devkita64:20260219
+
+      - name: Run PKSE devkitA64 syntax check
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            devkitpro/devkita64:20260219 \
+            python3 tools/syntax_check.py -j 2 \
+              src/Trainer/PokemonFile.cpp \
+              src/Trainer/PokemonFileBank.cpp \
+              src/UI/TrainerViewScreen.cpp \
+              src/UI/Panels/StoragePanel.cpp
+
+      - name: Remove temporary validation workflow
+        if: success()
+        run: git rm .github/workflows/validate-pokemon-file-syntax.yml
+
+      - name: Commit validation cleanup
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(ci): remove one-shot Pokemon file syntax validation"
+          git push origin HEAD:feature/pokemon-file-import-export
