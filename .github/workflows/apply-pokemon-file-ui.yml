@@ -17,6 +17,16 @@ jobs:
           ref: feature/pokemon-file-import-export
           fetch-depth: 0
 
+      - name: Normalize current storage menu spelling
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("tools/apply_pokemon_file_ui.py")
+          s = p.read_text(encoding="utf-8")
+          s = s.replace("Find…", r"Find\\u2026")
+          p.write_text(s, encoding="utf-8")
+          PY
+
       - name: Apply exact UI patch
         run: python3 tools/apply_pokemon_file_ui.py
 
