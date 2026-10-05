@@ -1,4 +1,4 @@
-name: Validate native Pokemon file syntax
+name: Validate native Pokemon file build warnings
 
 on:
   push:
@@ -9,9 +9,9 @@ permissions:
   contents: write
 
 jobs:
-  syntax:
+  warnings:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,17 +24,13 @@ jobs:
       - name: Pull pinned devkitA64 toolchain
         run: docker pull devkitpro/devkita64:20260219
 
-      - name: Run PKSE devkitA64 syntax check
+      - name: Run PKSE full warning gate
         run: |
           docker run --rm \
             -v "$PWD:/workspace" \
             -w /workspace \
             devkitpro/devkita64:20260219 \
-            python3 tools/syntax_check.py -j 2 \
-              src/Trainer/PokemonFile.cpp \
-              src/Trainer/PokemonFileBank.cpp \
-              src/UI/TrainerViewScreen.cpp \
-              src/UI/Panels/StoragePanel.cpp
+            python3 tools/syntax_check.py --warnings -j 4
 
       - name: Remove temporary validation workflow
         if: success()
@@ -45,5 +41,5 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore(ci): remove one-shot Pokemon file syntax validation"
+          git commit -m "chore(ci): remove one-shot Pokemon file warning validation"
           git push origin HEAD:feature/pokemon-file-import-export
