@@ -1,0 +1,16 @@
+name: Temporary PR patch runner
+
+on:
+  pull_request_target:
+    types: [synchronize]
+
+permissions:
+  contents: write
+
+jobs:
+  smoke:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'feature/pokemon-file-import-export'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm fork PR runner
+        run: echo "fork PR runner is available"
