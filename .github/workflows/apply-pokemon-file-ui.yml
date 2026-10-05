@@ -1,0 +1,76 @@
+name: Apply Pokemon file integration patch
+
+on:
+  push:
+    branches:
+      - feature/pokemon-file-import-export
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/pokemon-file-import-export
+          fetch-depth: 0
+
+      - name: Apply native file factory patch
+        run: |
+          if [ -f tools/apply_pokemon_file_factory.py ]; then
+            python3 tools/apply_pokemon_file_factory.py
+          fi
+
+      - name: Apply Bank-safe native import patch
+        run: |
+          if [ -f tools/apply_pokemon_file_backend.py ]; then
+            python3 tools/apply_pokemon_file_backend.py
+          fi
+
+      - name: Normalize current storage menu spelling
+        run: |
+          if [ -f tools/apply_pokemon_file_ui.py ]; then
+            python3 - <<'PY'
+          from pathlib import Path
+          p = Path("tools/apply_pokemon_file_ui.py")
+          s = p.read_text(encoding="utf-8")
+          s = s.replace("Find…", r"Find\\u2026")
+          p.write_text(s, encoding="utf-8")
+          PY
+          fi
+
+      - name: Apply exact UI patch
+        run: |
+          if [ -f tools/apply_pokemon_file_ui.py ]; then
+            python3 tools/apply_pokemon_file_ui.py
+          fi
+
+      - name: Run source contract check
+        run: python3 tools/check_pokemon_file_contract.py
+
+      - name: Remove one-shot patch machinery
+        run: |
+          git rm -f tools/apply_pokemon_file_factory.py 2>/dev/null || true
+          git rm -f tools/apply_pokemon_file_backend.py 2>/dev/null || true
+          git rm -f tools/apply_pokemon_file_ui.py 2>/dev/null || true
+          git rm -f .github/workflows/apply-pokemon-file-ui.yml 2>/dev/null || true
+
+      - name: Commit native Pokemon file integration
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add include/Trainer/PokemonFile.h \
+                  src/Trainer/PokemonFile.cpp \
+                  src/Trainer/PokemonFileBank.cpp \
+                  src/UI/TrainerViewScreen.cpp \
+                  src/UI/Panels/StoragePanel.cpp \
+                  tools/check_pokemon_file_contract.py 2>/dev/null || true
+          git add -u
+          if git diff --cached --quiet; then
+            echo "No integration changes left to commit"
+            exit 0
+          fi
+          git commit -m "feat(storage): wire native Pokemon file import and export"
+          git push origin HEAD:feature/pokemon-file-import-export
