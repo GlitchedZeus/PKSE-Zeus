@@ -11,7 +11,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,6 +32,15 @@ jobs:
             devkitpro/devkita64:20260219 \
             python3 tools/syntax_check.py --warnings -j 4
 
+      - name: Generate required romfs assets
+        run: |
+          python3 -m venv .asset-venv
+          .asset-venv/bin/pip install --disable-pip-version-check pillow
+          .asset-venv/bin/python tools/gen_fonts.py
+          .asset-venv/bin/python tools/gen_typeicons.py
+          .asset-venv/bin/python tools/gen_marks.py
+          .asset-venv/bin/python tools/gen_hdsprites.py
+
       - name: Build PKSE
         run: |
           docker run --rm \
@@ -39,6 +48,15 @@ jobs:
             -w /workspace \
             devkitpro/devkita64:20260219 \
             make -j 4
+          sha256sum PKSE.nro
+
+      - name: Upload hardware-test NRO
+        uses: actions/upload-artifact@v4
+        with:
+          name: PKSE-Issue-103-Candidate-${{ github.sha }}
+          path: PKSE.nro
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Remove temporary validation workflow
         if: success()
