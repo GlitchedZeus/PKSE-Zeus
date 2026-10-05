@@ -185,6 +185,52 @@ namespace Trainer::PokemonFile
             }
         }
 
+
+        std::byte *encryptBankRecord(GameVersion group, std::span<const std::byte> data,
+                                     uint32_t encryptionConstant)
+        {
+            switch (group)
+            {
+            case GameVersion::RBY:
+            case GameVersion::GSC:
+            {
+                auto *result = new std::byte[data.size()];
+                std::memcpy(result, data.data(), data.size());
+                return result;
+            }
+            case GameVersion::FRLG:
+            case GameVersion::RSE:
+                return Encryption::encryptArray3FRLG(data);
+            case GameVersion::DP:
+            case GameVersion::PT:
+            case GameVersion::HGSS:
+                return Encryption::encryptArray4HGSS(data);
+            case GameVersion::BW:
+            case GameVersion::B2W2:
+                return Encryption::encryptArray5B2W2(data);
+            case GameVersion::XY:
+            case GameVersion::ORAS:
+                return Encryption::encryptArray6ORAS(data);
+            case GameVersion::SM:
+            case GameVersion::USUM:
+                return Encryption::encryptArray7USUM(data);
+            case GameVersion::GG:
+                return Encryption::encryptArray7LGPE(data, encryptionConstant);
+            case GameVersion::SWSH:
+                return Encryption::encryptArray8SWSH(data, encryptionConstant);
+            case GameVersion::BDSP:
+                return Encryption::encryptArray8BDSP(data, encryptionConstant);
+            case GameVersion::PLA:
+                return Encryption::encryptArray8LA(data, encryptionConstant);
+            case GameVersion::SV:
+                return Encryption::encryptArray9SV(data, encryptionConstant);
+            case GameVersion::ZA:
+                return Encryption::encryptArray9LZA(data, encryptionConstant);
+            default:
+                return nullptr;
+            }
+        }
+
         std::string extensionForGroup(GameVersion group)
         {
             switch (group)
@@ -270,6 +316,92 @@ namespace Trainer::PokemonFile
         // readAllBytes() allocates with malloc(); pairing it with delete[] is undefined behaviour.
         std::free(raw);
         return result;
+    }
+
+
+    std::unique_ptr<Pokemon::Pokemon> prepareForBank(const Pokemon::Pokemon &pokemon, std::string *error)
+    {
+        const GameVersion bankGroup = Bank::groupAsBanked(pokemon.getGameGroup());
+        if (bankGroup == GameVersion::Invalid)
+        {
+            if (error) *error = "Pokemon format cannot be stored in the PKSE Bank";
+            return nullptr;
+        }
+
+        // Gen 1/2 have locale-dependent native lengths that the Bank tags explicitly preserve.
+        // Gen 3 already has a dedicated 80-byte depositedSpan() path in Bank.cpp. Keep those
+        // byte-preserving instead of manufacturing a different native representation.
+        if (bankGroup == GameVersion::RBY || bankGroup == GameVersion::GSC ||
+            bankGroup == GameVersion::FRLG)
+        {
+            auto copy = pokemon.clone();
+            if (!copy && error) *error = "Pokemon entity does not support cloning";
+            else if (error) error->clear();
+            return copy;
+        }
+
+        const size_t bankSize = Bank::recordSizeFor(bankGroup);
+        if (bankSize == 0)
+        {
+            if (error) *error = "PKSE Bank has no record size for this Pokemon format";
+            return nullptr;
+        }
+        if (pokemon.getDataSize() == bankSize)
+        {
+            auto copy = pokemon.clone();
+            if (!copy && error) *error = "Pokemon entity does not support cloning";
+            else if (error) error->clear();
+            return copy;
+        }
+        if (pokemon.getDataSize() > bankSize)
+        {
+            if (error) *error = "Pokemon record is larger than the PKSE Bank format";
+            return nullptr;
+        }
+
+        // The native file is a stored/box record. Build the Bank's party-sized representation from
+        // the already-validated DECRYPTED stored bytes, then let the existing entity class calculate
+        // the party-only level/stats tail. Padding encrypted bytes would be wrong because every
+        // generation encrypts that tail as part of its native record.
+        std::vector<std::byte> padded(bankSize, std::byte{0});
+        const auto source = pokemon.getData();
+        std::memcpy(padded.data(), source.data(), source.size());
+
+        std::byte *encrypted = encryptBankRecord(bankGroup, padded, pokemon.encryptionConstant());
+        if (!encrypted)
+        {
+            if (error) *error = "Pokemon format has no Bank promotion serializer";
+            return nullptr;
+        }
+
+        auto promoted = Bank::makePokemon(
+            bankGroup, std::span<const std::byte>(encrypted, bankSize));
+        delete[] encrypted;
+        if (!promoted)
+        {
+            if (error) *error = "could not construct party-sized Pokemon record for the Bank";
+            return nullptr;
+        }
+
+        promoted->recalculateStats();
+        promoted->refreshChecksum();
+        if (!promoted->isStructurallyValid())
+        {
+            if (error) *error = "party-sized Bank record failed structural/checksum validation";
+            return nullptr;
+        }
+
+        // Prove the promoted entity can still pass the same native serializer/reparse contract as a
+        // directly loaded file before exposing it to Storage.
+        std::string verifyError;
+        if (serialize(*promoted, &verifyError).empty())
+        {
+            if (error) *error = "Bank promotion round-trip failed: " + verifyError;
+            return nullptr;
+        }
+
+        if (error) error->clear();
+        return promoted;
     }
 
     std::vector<std::byte> serialize(const Pokemon::Pokemon &pokemon, std::string *error)

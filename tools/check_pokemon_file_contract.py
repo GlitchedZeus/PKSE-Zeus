@@ -13,6 +13,7 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 CPP = (ROOT / "src/Trainer/PokemonFile.cpp").read_text(encoding="utf-8")
 HEADER = (ROOT / "include/Trainer/PokemonFile.h").read_text(encoding="utf-8")
+BANK_ADAPTER = (ROOT / "src/Trainer/PokemonFileBank.cpp").read_text(encoding="utf-8")
 
 specs = set(re.findall(r'\{"(\.[a-z0-9]+)",\s*GameVersion::', CPP))
 extensions_block = re.search(
@@ -50,5 +51,11 @@ for needle in (
 assert "std::free(raw);" in CPP, "readAllBytes() buffer must be released with free()"
 assert "bool supportsFileName(const std::string &fileName);" in HEADER
 assert "bool importIntoBank(Bank &bank" in HEADER
+assert "prepareForBank(const Pokemon::Pokemon &pokemon" in HEADER
+assert "Bank::recordSizeFor(bankGroup)" in CPP
+assert "promoted->recalculateStats();" in CPP
+assert "promoted->refreshChecksum();" in CPP
+assert "serialize(*promoted, &verifyError)" in CPP
+assert "prepareForBank(*loaded.pokemon, &bankError)" in BANK_ADAPTER
 
 print(f"Pokemon file contract OK: {len(advertised)} native extensions")

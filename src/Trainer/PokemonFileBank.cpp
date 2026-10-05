@@ -16,6 +16,14 @@ namespace Trainer::PokemonFile
             return false;
         }
 
+        std::string bankError;
+        auto bankPokemon = prepareForBank(*loaded.pokemon, &bankError);
+        if (!bankPokemon)
+        {
+            if (error) *error = bankError.empty() ? "could not normalize Pokemon for Bank storage" : bankError;
+            return false;
+        }
+
         for (size_t box = 0; box < bank.boxes.size(); ++box)
         {
             for (size_t slot = 0; slot < Bank::BANK_SLOTS_PER_BOX; ++slot)
@@ -23,7 +31,7 @@ namespace Trainer::PokemonFile
                 if (bank.boxes[box][slot])
                     continue;
 
-                bank.boxes[box][slot] = std::move(loaded.pokemon);
+                bank.boxes[box][slot] = std::move(bankPokemon);
                 bank.currentBox = static_cast<uint16_t>(box);
                 if (outBox) *outBox = box;
                 if (outSlot) *outSlot = slot;

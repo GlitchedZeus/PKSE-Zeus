@@ -39,6 +39,13 @@ namespace Trainer
         /// Read and parse one native Pokemon entity from disk.
         LoadResult load(const std::string &path);
 
+        /// Return an entity safe for PKSE's unified Bank representation. Native box-sized files
+        /// are promoted to the Bank's party-sized record where required, with the party tail
+        /// recalculated from the stored data. Gen 1/2 locale-sized records and Gen 3's existing
+        /// short-record Bank path remain byte-preserving.
+        std::unique_ptr<Pokemon::Pokemon> prepareForBank(const Pokemon::Pokemon &pokemon,
+                                                         std::string *error = nullptr);
+
         /// Read, validate and place one native Pokemon entity into the first free Bank slot.
         /// Nothing is persisted here: the existing Bank Save/Discard flow owns that decision.
         bool importIntoBank(Bank &bank, const std::string &path, size_t *outBox = nullptr,
