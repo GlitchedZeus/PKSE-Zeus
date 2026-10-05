@@ -1,0 +1,35 @@
+name: Apply Pokemon file UI patch
+
+on:
+  push:
+    branches:
+      - feature/pokemon-file-import-export
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/pokemon-file-import-export
+          fetch-depth: 0
+
+      - name: Apply exact UI patch
+        run: python3 tools/apply_pokemon_file_ui.py
+
+      - name: Run source contract check
+        run: python3 tools/check_pokemon_file_contract.py
+
+      - name: Remove one-shot patch machinery
+        run: git rm tools/apply_pokemon_file_ui.py .github/workflows/apply-pokemon-file-ui.yml
+
+      - name: Commit UI integration
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/UI/TrainerViewScreen.cpp src/UI/Panels/StoragePanel.cpp
+          git commit -m "feat(storage): wire native Pokemon file import and export"
+          git push origin HEAD:feature/pokemon-file-import-export
