@@ -8,6 +8,7 @@
 #include <span>
 #include <string>
 #include <sys/stat.h>
+#include <utility>
 #include <vector>
 
 #include "Encryption/Encryption3FRLG.h"
@@ -105,29 +106,56 @@ namespace Trainer::PokemonFile
         }
 
 
-        std::unique_ptr<Pokemon::Pokemon> makeNativePokemon(GameVersion group,
-                                                            std::span<const std::byte> record)
+        // Constructors consume encrypted records. File extensions identify plaintext, not cipher text.
+        std::byte *encryptBankRecord(GameVersion group, std::span<const std::byte> data,
+                                     uint32_t encryptionConstant);
+
+        uint32_t encryptionSeed(std::span<const std::byte> record)
         {
-            // Unlike Bank::makePokemon(), this factory intentionally accepts both native stored and
-            // party lengths. The extension has already chosen the format and sizeAllowed() has
-            // already rejected every other length before this is called.
-            switch (group)
+            return static_cast<uint32_t>(static_cast<uint8_t>(record[0])) |
+                   (static_cast<uint32_t>(static_cast<uint8_t>(record[1])) << 8) |
+                   (static_cast<uint32_t>(static_cast<uint8_t>(record[2])) << 16) |
+                   (static_cast<uint32_t>(static_cast<uint8_t>(record[3])) << 24);
+        }
+
+        bool validGen12Header(std::span<const std::byte> record, GameVersion group)
+        {
+            const auto octet = [&](size_t index) { return static_cast<uint8_t>(record[index]); };
+            if (octet(0) != 1 || octet(2) != 0xFF)
+                return false;
+            if (group == GameVersion::GSC)
             {
-            case GameVersion::RBY: return std::make_unique<Pokemon::Pokemon1RBY>(record);
-            case GameVersion::GSC: return std::make_unique<Pokemon::Pokemon2GSC>(record);
-            case GameVersion::FRLG: return std::make_unique<Pokemon::Pokemon3FRLG>(record);
-            case GameVersion::HGSS: return std::make_unique<Pokemon::Pokemon4HGSS>(record);
-            case GameVersion::B2W2: return std::make_unique<Pokemon::Pokemon5B2W2>(record);
-            case GameVersion::ORAS: return std::make_unique<Pokemon::Pokemon6ORAS>(record);
-            case GameVersion::USUM: return std::make_unique<Pokemon::Pokemon7USUM>(record);
-            case GameVersion::GG: return std::make_unique<Pokemon::Pokemon7LGPE>(record);
-            case GameVersion::SWSH: return std::make_unique<Pokemon::Pokemon8SWSH>(record);
-            case GameVersion::BDSP: return std::make_unique<Pokemon::Pokemon8BDSP>(record);
-            case GameVersion::PLA: return std::make_unique<Pokemon::Pokemon8LA>(record);
-            case GameVersion::SV: return std::make_unique<Pokemon::Pokemon9SV>(record);
-            case GameVersion::ZA: return std::make_unique<Pokemon::Pokemon9LZA>(record);
-            default: return nullptr;
+                const uint8_t species = octet(3);
+                if (species == 0 || octet(1) != species && octet(1) != 0xFD)
+                    return false;
+                const uint8_t level = octet(3 + 0x1F);
+                if (level < 1 || level > 100)
+                    return false;
+                // Korean G/S uses a distinct charset which this editor cannot decode.
+                if (record.size() == Pokemon::SIZE_2ULIST && octet(51) <= 0x0B)
+                    return false;
             }
+            else
+            {
+                if (octet(1) == 0 || octet(1) == 0xFF || octet(1) != octet(3))
+                    return false;
+                const uint8_t level = octet(3 + 0x21);
+                if (level < 1 || level > 100)
+                    return false;
+            }
+            return true;
+        }
+
+        bool matchesGameFormat(const Pokemon::Pokemon &pokemon, GameVersion group)
+        {
+            const uint8_t origin = pokemon.originGame();
+            if (group == GameVersion::GG)
+                return origin == static_cast<uint8_t>(GameVersion::GP) ||
+                       origin == static_cast<uint8_t>(GameVersion::GE);
+            if (group == GameVersion::USUM)
+                return origin != static_cast<uint8_t>(GameVersion::GP) &&
+                       origin != static_cast<uint8_t>(GameVersion::GE);
+            return true;
         }
 
         std::unique_ptr<Pokemon::Pokemon> parseUnchecked(std::span<const std::byte> bytes,
@@ -156,20 +184,38 @@ namespace Trainer::PokemonFile
                 return nullptr;
             }
 
-            auto pokemon = makeNativePokemon(spec->group, bytes);
-            if (!pokemon || pokemon->speciesID() == 0)
+            if ((spec->group == GameVersion::RBY || spec->group == GameVersion::GSC) &&
+                !validGen12Header(bytes, spec->group))
             {
-                if (error) *error = "file does not contain an occupied Pokemon record";
+                if (error) *error = "invalid Gen 1/2 list header, level, or unsupported locale";
                 return nullptr;
             }
-            if (!pokemon->isStructurallyValid())
+
+            auto valid = [&](const std::unique_ptr<Pokemon::Pokemon> &candidate) {
+                return candidate && candidate->speciesID() != 0 &&
+                       candidate->isStructurallyValid() &&
+                       matchesGameFormat(*candidate, spec->group) &&
+                       (candidate->getDataSize() == bytes.size() ||
+                        (spec->group == GameVersion::PLA &&
+                         bytes.size() == spec->shortSize &&
+                         candidate->getDataSize() == spec->longSize));
+            };
+            auto pokemon = Bank::makePokemon(spec->group, bytes);
+            if (!valid(pokemon) && spec->group != GameVersion::RBY && spec->group != GameVersion::GSC)
             {
-                if (error) *error = "Pokemon record failed structural/checksum validation";
-                return nullptr;
+                // Standard PKHeX/PKSM .pk* files are decrypted. Retry by encrypting the input
+                // into the representation expected by PKSE's existing entity constructors.
+                std::byte *encrypted = encryptBankRecord(spec->group, bytes, encryptionSeed(bytes));
+                if (encrypted)
+                {
+                    pokemon = Bank::makePokemon(
+                        spec->group, std::span<const std::byte>(encrypted, bytes.size()));
+                    delete[] encrypted;
+                }
             }
-            if (pokemon->getDataSize() != bytes.size())
+            if (!valid(pokemon))
             {
-                if (error) *error = "Pokemon parser changed the native record size";
+                if (error) *error = "Pokemon record failed structural/checksum or format validation";
                 return nullptr;
             }
 
@@ -331,18 +377,28 @@ namespace Trainer::PokemonFile
         if (!pokemon)
             return {nullptr, std::move(error)};
 
-        // The parser accepting bytes is not enough: prove that the entity can go back through PKSE's
-        // native serializer and decode to the same decrypted record before it is allowed into the Bank.
+        // No caller may receive a short PK8/PB8/PK9/PB7 buffer: party accessors can
+        // read outside it. Promote before returning, not just during Bank insertion.
+        std::string promotionError;
+        auto promoted = prepareForBank(*pokemon, &promotionError);
+        if (!promoted)
+            return {nullptr, std::move(promotionError)};
         std::string roundTripError;
-        const std::vector<std::byte> native = serialize(*pokemon, &roundTripError);
-        if (native.empty())
+        if (serialize(*promoted, &roundTripError).empty())
             return {nullptr, "native round-trip failed: " + roundTripError};
-
-        return {std::move(pokemon), {}};
+        return {std::move(promoted), {}};
     }
 
     LoadResult load(const std::string &path)
     {
+        const FormatSpec *fileFormat = specForExtension(lowerExtension(path));
+        if (!fileFormat)
+            return {nullptr, "unsupported Pokemon file extension"};
+        struct stat fileDetails{};
+        if (stat(path.c_str(), &fileDetails) != 0 || !S_ISREG(fileDetails.st_mode) ||
+            fileDetails.st_size < 0 ||
+            !sizeAllowed(*fileFormat, static_cast<size_t>(fileDetails.st_size)))
+            return {nullptr, "Pokemon file has an unexpected size"};
         size_t byteCount = 0;
         uint8_t *raw = Utils::readAllBytes(path.c_str(), &byteCount);
         if (!raw)
@@ -403,6 +459,19 @@ namespace Trainer::PokemonFile
         std::vector<std::byte> padded(bankSize, std::byte{0});
         const auto source = pokemon.getData();
         std::memcpy(padded.data(), source.data(), source.size());
+        // Modern formats keep the battle level in a party-only byte. Leaving it zero
+        // makes recalculateStats() return early, giving a Level 0 / 0 HP import.
+        if ((bankGroup == GameVersion::SWSH || bankGroup == GameVersion::BDSP ||
+             bankGroup == GameVersion::SV || bankGroup == GameVersion::ZA) && bankSize > 0x148)
+        {
+            padded[0x148] = static_cast<std::byte>(
+                Pokemon::getLevelFromExp(pokemon.exp(), Pokemon::getGrowthRate(pokemon.speciesID())));
+        }
+        if (bankGroup == GameVersion::PLA && bankSize > 0x168)
+        {
+            padded[0x168] = static_cast<std::byte>(
+                Pokemon::getLevelFromExp(pokemon.exp(), Pokemon::getGrowthRate(pokemon.speciesID())));
+        }
 
         std::byte *encrypted = encryptBankRecord(bankGroup, padded, pokemon.encryptionConstant());
         if (!encrypted)
@@ -462,6 +531,12 @@ namespace Trainer::PokemonFile
             if (error) *error = "Pokemon entity does not support cloning";
             return {};
         }
+        // These formats may have cached party stats but no party level on box exports.
+        // Only adjust the clone; the source Pokémon must never be mutated by export.
+        if (copy->getGameGroup() == GameVersion::RBY && copy->getDataSize() > 0x24)
+            copy->getData()[3 + 0x21] = static_cast<std::byte>(copy->level());
+        if (copy->getGameGroup() == GameVersion::PLA && copy->getDataSize() > 0x168)
+            copy->getData()[0x168] = static_cast<std::byte>(copy->level());
         copy->refreshChecksum();
         if (!copy->isStructurallyValid())
         {
@@ -469,17 +544,10 @@ namespace Trainer::PokemonFile
             return {};
         }
 
-        std::byte *encrypted = encryptNative(*copy);
-        if (!encrypted)
-        {
-            if (error) *error = "Pokemon entity has no native serializer";
-            return {};
-        }
-
-        std::vector<std::byte> native(copy->getDataSize());
-        std::memcpy(native.data(), encrypted, native.size());
-        delete[] encrypted; // PKSE encryption helpers explicitly return new[] buffers.
-
+        // Canonical PKHeX .pk* / .pb* / .pa* files are DECRYPTED; the old version
+        // emitted .ek* bytes under a .pk* filename and was not interoperable.
+        const auto decoded = copy->getData();
+        std::vector<std::byte> native(decoded.begin(), decoded.end());
         std::string verifyError;
         auto roundTripped = parseUnchecked(native, extension, &verifyError);
         if (!roundTripped)
@@ -488,7 +556,7 @@ namespace Trainer::PokemonFile
             return {};
         }
         if (roundTripped->getDataSize() != copy->getDataSize() ||
-            std::memcmp(roundTripped->getData().data(), copy->getData().data(), copy->getDataSize()) != 0)
+            std::memcmp(roundTripped->getData().data(), decoded.data(), decoded.size()) != 0)
         {
             if (error) *error = "export verification changed Pokemon bytes after native reparse";
             return {};

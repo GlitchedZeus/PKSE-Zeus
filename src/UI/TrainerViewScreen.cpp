@@ -1657,23 +1657,23 @@ namespace UI
         if (!bank)
             return;
         pksmImport.reset();
-        // One browser handles both PKSM bank containers and standalone native Pokemon records.
-        // Native files land in the in-memory Bank first, so Storage's existing Save/Discard prompt
-        // remains the only persistence decision.
+        // PKSM folders come first so existing PKSM users still land on their bank files.
+        // Native imports use the same browser, but always stage into the in-memory Bank
+        // and leave persistence to Storage's existing Save/Discard prompt.
         fileBrowserPurpose = FileBrowserPurpose::PKSMBank;
         std::vector<std::string> importExtensions = Trainer::PokemonFile::extensions();
         importExtensions.push_back(".bnk");
         importExtensions.push_back(".bin"); // hand-copied pre-2019 PKSM bank.bin
         fileBrowser.open("Import Pokemon / PKSM Bank",
-                         {"sdmc:/PKSE/exports",
-                          "sdmc:/PKSE",
-                          "sdmc:/3ds/PKSM/banks",
+                         {"sdmc:/3ds/PKSM/banks",
                           "sdmc:/3ds/PKSM/extDataBackup/banks",
                           "sdmc:/3ds/PKSM",
                           "sdmc:/PKSM/banks",
+                          "sdmc:/PKSE/exports",
+                          "sdmc:/PKSE",
                           "sdmc:/"},
                          importExtensions);
-        Utils::logEventToFile("IMPORT action=BROWSE dir=\"" + fileBrowser.directory + "\"");
+        Utils::logEventToFile("PKSMIMPORT action=BROWSE dir=\"" + fileBrowser.directory + "\"");
     }
 
     void TrainerViewScreen::openTradePartnerBrowser()
