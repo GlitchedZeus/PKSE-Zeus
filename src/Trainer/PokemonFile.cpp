@@ -140,9 +140,6 @@ namespace Trainer::PokemonFile
             {
                 if (octet(1) == 0 || octet(1) == 0xFF || octet(1) != octet(3))
                     return false;
-                const uint8_t level = octet(3 + 0x21);
-                if (level < 1 || level > 100)
-                    return false;
             }
             return true;
         }
