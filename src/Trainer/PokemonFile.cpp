@@ -37,6 +37,7 @@
 #include "Pokemon/Pokemon8LA.h"
 #include "Pokemon/Pokemon9SV.h"
 #include "Pokemon/Pokemon9LZA.h"
+#include "Pokemon/Experience.h"
 #include "Trainer/Bank.h"
 #include "Utils/FileUtilities.h"
 
@@ -126,7 +127,7 @@ namespace Trainer::PokemonFile
             if (group == GameVersion::GSC)
             {
                 const uint8_t species = octet(3);
-                if (species == 0 || octet(1) != species && octet(1) != 0xFD)
+                if (species == 0 || (octet(1) != species && octet(1) != 0xFD))
                     return false;
                 const uint8_t level = octet(3 + 0x1F);
                 if (level < 1 || level > 100)
@@ -222,52 +223,6 @@ namespace Trainer::PokemonFile
             if (error) error->clear();
             return pokemon;
         }
-
-        std::byte *encryptNative(const Pokemon::Pokemon &pokemon)
-        {
-            const auto data = pokemon.getData();
-            switch (pokemon.getGameGroup())
-            {
-            case GameVersion::RBY:
-            case GameVersion::GSC:
-            {
-                auto *result = new std::byte[data.size()];
-                std::memcpy(result, data.data(), data.size());
-                return result;
-            }
-            case GameVersion::FRLG:
-            case GameVersion::RSE:
-                return Encryption::encryptArray3FRLG(data);
-            case GameVersion::DP:
-            case GameVersion::PT:
-            case GameVersion::HGSS:
-                return Encryption::encryptArray4HGSS(data);
-            case GameVersion::BW:
-            case GameVersion::B2W2:
-                return Encryption::encryptArray5B2W2(data);
-            case GameVersion::XY:
-            case GameVersion::ORAS:
-                return Encryption::encryptArray6ORAS(data);
-            case GameVersion::SM:
-            case GameVersion::USUM:
-                return Encryption::encryptArray7USUM(data);
-            case GameVersion::GG:
-                return Encryption::encryptArray7LGPE(data, pokemon.encryptionConstant());
-            case GameVersion::SWSH:
-                return Encryption::encryptArray8SWSH(data, pokemon.encryptionConstant());
-            case GameVersion::BDSP:
-                return Encryption::encryptArray8BDSP(data, pokemon.encryptionConstant());
-            case GameVersion::PLA:
-                return Encryption::encryptArray8LA(data, pokemon.encryptionConstant());
-            case GameVersion::SV:
-                return Encryption::encryptArray9SV(data, pokemon.encryptionConstant());
-            case GameVersion::ZA:
-                return Encryption::encryptArray9LZA(data, pokemon.encryptionConstant());
-            default:
-                return nullptr;
-            }
-        }
-
 
         std::byte *encryptBankRecord(GameVersion group, std::span<const std::byte> data,
                                      uint32_t encryptionConstant)

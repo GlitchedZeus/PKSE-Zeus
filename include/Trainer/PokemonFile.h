@@ -1,5 +1,5 @@
-#ifndef TRAINER_POKEMON_FILE_H
-#define TRAINER_POKEMON_FILE_H
+#ifndef TRAINER_POKEMONFILE_H
+#define TRAINER_POKEMONFILE_H
 
 #include <cstddef>
 #include <memory>
@@ -51,7 +51,7 @@ namespace Trainer
         bool importIntoBank(Bank &bank, const std::string &path, size_t *outBox = nullptr,
                             size_t *outSlot = nullptr, std::string *error = nullptr);
 
-        /// Serialize a Pokemon to its native encrypted/on-disk entity representation. The source object
+        /// Serialize a Pokemon to PKHeX-compatible decrypted native bytes. The source object
         /// is never mutated: checksum refresh happens on a clone, then the emitted bytes are reparsed and
         /// compared with that clone before they are returned.
         std::vector<std::byte> serialize(const Pokemon::Pokemon &pokemon, std::string *error = nullptr);
