@@ -246,11 +246,11 @@ namespace Save
         {
             passed = saveTrainerInfoLA(static_cast<Trainer8LA &>(trainer), backupDir, titleId, userUid, injectToTitle);
         }
-        else if (isLooseSaveGroup(trainerGroup))
+        else if (isLooseSaveGroup(trainerGroup) && (trainerGroup != GameVersion::FRLG || titleId == 0))
         {
-            // Gens 1, 2 and 4-7 ignore titleId / userUid / injectToTitle entirely: there is no
-            // installed title behind these saves. `backupDir` carries the FILE PATH the user
-            // opened.
+            // An external save has no installed title; backupDir is the FILE PATH it came from.
+            // FireRed/LeafGreen can also be installed Switch titles, and those MUST keep using
+            // their existing title-save writer below (which expects a DIRECTORY).
             passed = saveExternalSave(trainer, backupDir);
         }
         else if (trainerGroup == GameVersion::BDSP)
@@ -874,21 +874,13 @@ namespace Save
     bool saveTrainerInfoFRLG(Trainer3FRLG &trainer, const char *backupDir, u64 titleId, AccountUid userUid,
                              bool injectToTitle)
     {
-        // Apply edits into the raw save, then recompute every sector checksum.
-        trainer.updateItemBlock();
-        trainer.updateBoxBlock();
-        trainer.updateBoxNameBlock(); // must precede this game's checksum/hash pass
-        trainer.updateCurrentBoxBlock();
-        trainer.updatePartyBlock();
-        trainer.updatePokedexBlock();     // seen/caught for everything now in storage; before the checksums
-        trainer.updateTrainerInfoBlock(); // money / OT name; before the sector checksums
-        trainer.finalizeChecksums();
+        // Same sector-writing/checksum sequence as loose-file saves. Keep one serializer for both.
+        const std::vector<uint8_t> &raw = trainer.serialize();
 
         const std::string name = trainer.fileName().empty() ? std::string("save.sav") : trainer.fileName();
         char savePath[1024];
         snprintf(savePath, sizeof(savePath), "%s/%s", backupDir, name.c_str());
 
-        const std::vector<uint8_t> &raw = trainer.getSaveData();
         FILE *outFile = fopen(savePath, "wb");
         if (!outFile)
         {
@@ -968,6 +960,7 @@ namespace Save
         case GameVersion::RBY:
         case GameVersion::GSC:
         case GameVersion::RSE:
+        case GameVersion::FRLG:
         case GameVersion::DP:
         case GameVersion::PT:
         case GameVersion::HGSS:
@@ -1017,12 +1010,12 @@ namespace Save
         const LooseFormat LOOSE_FORMATS[] = {
             {detectRBY, makeLoose<Trainer::Trainer1RBY>, GameVersion::RBY},
             {detectGSC, makeLoose<Trainer::Trainer2GSC>, GameVersion::GSC},
-            // Gen 3 goes here, between Gen 2 and Gen 4, because that is PKHeX's order. Only
-            // Ruby/Sapphire/Emerald are in the chain: FireRed/LeafGreen are a Switch title and
-            // always arrive with a title id, so there is no loose FR/LG row to be ordered against.
-            // Trainer3RSE::detect still refuses an FR/LG file outright rather than opening one with
-            // Hoenn's offsets -- the two share this container and only Small+0xAC tells them apart.
+            // Gen 3 goes between Gen 2 and Gen 4. Both games use 128 KiB saves,
+            // so discriminate by Small+0xAC and require a complete sector-id table.
+            // RSE is tried first, FRLG second; neither detector accepts the other's bytes.
+            // FireRed/LeafGreen are ALSO installed Switch titles, handled separately on write.
             {Trainer::Trainer3RSE::detect, makeLoose<Trainer::Trainer3RSE>, GameVersion::RSE},
+            {Trainer::Trainer3FRLG::detect, makeLoose<Trainer::Trainer3FRLG>, GameVersion::FRLG},
             {Trainer::Trainer4DP::detect, makeLoose<Trainer::Trainer4DP>, GameVersion::DP},
             {Trainer::Trainer4PT::detect, makeLoose<Trainer::Trainer4PT>, GameVersion::PT},
             {Trainer::Trainer4HGSS::detect, makeLoose<Trainer::Trainer4HGSS>, GameVersion::HGSS},
@@ -1114,6 +1107,11 @@ namespace Save
             const auto &hoenn = static_cast<const Trainer::Trainer3RSE &>(trainer);
             return hoenn.getGameVersion() == GameVersion::EM ? "Pokemon Emerald" : "Pokemon Ruby/Sapphire";
         }
+        if (gameVersion == GameVersion::FRLG)
+        {
+            // The raw GBA save cannot distinguish FireRed from LeafGreen.
+            return "Pokemon FireRed/LeafGreen";
+        }
         return "Pokemon " + std::string(getGameVersionName(gameVersion));
     }
 
@@ -1146,6 +1144,9 @@ namespace Save
             break;
         case GameVersion::RSE:
             raw = &static_cast<Trainer::Trainer3RSE &>(trainer).serialize();
+            break;
+        case GameVersion::FRLG:
+            raw = &static_cast<Trainer::Trainer3FRLG &>(trainer).serialize();
             break;
         case GameVersion::DP:
             raw = &static_cast<Trainer::Trainer4DP &>(trainer).serialize();

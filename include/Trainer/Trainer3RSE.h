@@ -150,9 +150,8 @@ namespace Trainer
         /// bytes to write. The order matters: the block writers all mutate sector DATA, so every one
         /// of them has to run before the checksums are stamped over the result.
         ///
-        /// Ruby/Sapphire/Emerald are the only Gen 3 games PKSE opens as a loose file, so unlike
-        /// FireRed -- which arrives with a title id and is written by saveTrainerInfoFRLG -- this one
-        /// is reached through saveExternalSave, which needs the whole image in one call.
+        /// Loose Ruby/Sapphire/Emerald files are written by saveExternalSave, alongside
+        /// loose FireRed/LeafGreen files. Each game has its own sector layouts and serializer.
         const std::vector<uint8_t> &serialize();
     };
 }

@@ -181,13 +181,12 @@ namespace Save
                                                        std::string *label);
 
     /**
-     * True when a save of this GROUP arrives as a loose FILE rather than as installed save data.
+     * True when this GROUP can open as a loose FILE.
      *
-     * Derived from the LOOSE_FORMATS table itself, so it cannot drift from what openExternalSave
-     * will actually accept. The trade-partner picker is the caller: a record whose format comes
-     * from a file gets the file browser, and everything else -- Sword/Shield, BD/SP, S/V, Z-A,
-     * Let's Go, FireRed/LeafGreen -- gets the console's own save list, because those titles have no
-     * file to browse to.
+     * Derived from LOOSE_FORMATS, so it cannot drift from openExternalSave. The caller
+     * must account for FireRed/LeafGreen: it can be opened either from a standalone
+     * .sav/.srm OR an installed Switch title, depending on the session's title ID.
+     * Other installed-only titles use the console save picker.
      */
     bool groupOpensFromFile(Enums::GameVersion group) noexcept;
 

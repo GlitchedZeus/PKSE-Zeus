@@ -643,6 +643,19 @@ namespace Trainer
         return pokemon;
     }
 
+    const std::vector<uint8_t> &Trainer3FRLG::serialize()
+    {
+        updateItemBlock();
+        updateBoxBlock();
+        updateBoxNameBlock();
+        updateCurrentBoxBlock();
+        updatePartyBlock();
+        updatePokedexBlock();
+        updateTrainerInfoBlock();
+        finalizeChecksums(); // checksums must come after every data change
+        return saveData;
+    }
+
     void Trainer3FRLG::finalizeChecksums()
     {
         // PKHeX FRLG per-sector checksum lengths (id 0 / 4 / 13 are short; the rest full 0xF80).

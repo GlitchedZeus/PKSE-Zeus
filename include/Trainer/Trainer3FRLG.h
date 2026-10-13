@@ -101,10 +101,8 @@ namespace Trainer
         /// FireRed, claiming the pair. A GBA save cannot say which of the two it is -- PKHeX's
         /// SAV3FRLG has Version as a settable property defaulting to FR for exactly this reason.
         ///
-        /// Nothing is lost by it here: FireRed and LeafGreen are separate Nintendo Switch Online
-        /// titles with separate title ids, so every caller that needs the real answer already has
-        /// it from Enums::getGameVersion(titleId), and FRLG is deliberately absent from the loose
-        /// probe chain (LOOSE_FORMATS) -- a Gen 3 save never arrives without a title id.
+        /// For an installed title the title ID provides the true version. An external GBA save
+        /// has no title ID, so its display name identifies the FireRed/LeafGreen pair.
         GameVersion getGameVersion() const noexcept override { return GameVersion::FR; }
 
         /// True when these bytes are a FireRed/LeafGreen save, judged from CONTENT alone.
@@ -113,11 +111,8 @@ namespace Trainer
         /// inverted: fourteen well-formed sectors in either slot, then the fixed 1 at Small+0xAC
         /// that FR/LG write and Ruby/Sapphire/Emerald do not.
         ///
-        /// FRLG is still deliberately absent from LOOSE_FORMATS -- this is not a second way to
-        /// browse to one. It exists because a Switch save is found by TITLE ID, and FireRed and
-        /// LeafGreen ship a separate title per language, so a hand-kept id list silently hides
-        /// every localisation nobody has reported yet. SaveSelectScreen falls back to this for an
-        /// id it does not recognise; see the note on Enums::getGameVersion.
+        /// Used by BOTH loose .sav/.srm files and installed title saves. A save's content,
+        /// not its filename extension, distinguishes FRLG from Ruby/Sapphire/Emerald.
         static bool detect(const std::vector<uint8_t> &bytes) noexcept;
 
         uint8_t language() const noexcept override { return languageId; }
@@ -128,6 +123,10 @@ namespace Trainer
         uint32_t securityKey() const noexcept { return saveSecurityKey; }
 
         // Recompute all 14 active-slot sector checksums into their footers (call before writing to disk).
+        /// Apply all pending edits, then update sector checksums. Used by both installed
+        /// title saves and loose .sav/.srm files, avoiding divergent write paths.
+        const std::vector<uint8_t> &serialize();
+
         void finalizeChecksums();
     };
 }

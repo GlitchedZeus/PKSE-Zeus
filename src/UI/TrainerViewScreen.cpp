@@ -4489,13 +4489,13 @@ namespace UI
                 if (buttonsDown & HidNpadButton_A)
                 { // pick a save you own -- a real trainer
                     tradeEvolveConfirmActive = false;
-                    // A SWITCH TITLE'S SAVE IS NOT A FILE ON THE CARD. Which route a record's donor
-                    // comes down is decided by asking whether its FORMAT opens from a file at all,
-                    // read off the LOOSE_FORMATS table itself -- not by whether the console happens
-                    // to have a compatible title installed. Those are different questions, and
-                    // answering the first with the second sent a Sword owner with no Shield save to
-                    // a file browser that could never open one.
-                    if (Save::groupOpensFromFile(pokemon->getGameGroup()))
+                    // A SWITCH TITLE'S SAVE IS NOT A FILE ON THE CARD. Most groups are
+                    // either loose files or installed titles, but FireRed/LeafGreen supports
+                    // both. Preserve the installed-title picker for an installed FRLG session.
+                    const GameVersion partnerGroup = pokemon->getGameGroup();
+                    const bool chooseFile = Save::groupOpensFromFile(partnerGroup) &&
+                        !(partnerGroup == GameVersion::FRLG && titleId != 0);
+                    if (chooseFile)
                         openTradePartnerBrowser();
                     else
                         openTradePartnerTitlePicker();
