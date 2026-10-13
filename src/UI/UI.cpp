@@ -1,4 +1,5 @@
 
+#include <cstdlib>
 #include "Globals.h"
 #include "Save/GetSaveFileContents.h"
 #include "UI/UI.h"
@@ -241,7 +242,7 @@ namespace UI
             return;
         }
         std::vector<uint8_t> bytes(raw, raw + length);
-        delete[] raw;
+        std::free(raw);
 
         // The picker already validated this, but it is re-identified rather than assumed: the
         // file could have changed on the card between the pick and here, and constructing a

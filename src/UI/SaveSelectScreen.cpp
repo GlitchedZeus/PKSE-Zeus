@@ -1,4 +1,5 @@
 #include <cstring>
+#include <cstdlib>
 #include <cstdio>
 
 #include "Globals.h"
@@ -677,7 +678,7 @@ namespace UI
         // The SAME probe chain the editor will run, so the picker and the opener cannot disagree
         // about what is a save.
         const std::vector<uint8_t> probe(bytes, bytes + length);
-        delete[] bytes;
+        std::free(bytes);
         if (!Save::isExternalSave(probe))
         {
             // Naming the size is what turns "it didn't work" into something the user can act on:

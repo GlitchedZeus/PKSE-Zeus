@@ -1,3 +1,5 @@
+#include <cstdlib>
+#include <cstring>
 #include <cstdio>
 #include <vector>
 #include <locale>
@@ -314,7 +316,7 @@ namespace Save
         if (fileSize < SAVE_SIZE7_LGPE)
         {
             logErrorToFile("Let's Go save file is too small");
-            delete[] file;
+            std::free(file);
             return Trainer7LGPE(std::vector<Block>());
         }
 
@@ -327,7 +329,7 @@ namespace Save
 
         Trainer7LGPE trainer(std::move(blocks));
 
-        delete[] file;
+        std::free(file);
         return trainer;
     }
 
@@ -362,12 +364,12 @@ namespace Save
         if (fileSize < SAVE_SIZE7_LGPE)
         {
             logErrorToFile("Let's Go save file too small to write");
-            delete[] file;
+            std::free(file);
             return false;
         }
 
         std::vector<uint8_t> raw(file, file + fileSize);
-        delete[] file;
+        std::free(file);
 
         // Patch edited blocks + recompute block checksums into the BEEF footer.
         trainer.updateTrainerInfoBlock(); // money / OT name; mutates blocks before the copy
@@ -429,7 +431,7 @@ namespace Save
         std::vector<Block> blocks = decrypt(file, fileSize);
         Trainer8SWSH trainer(blocks);
 
-        delete[] file;
+        std::free(file);
         return trainer;
     }
 
@@ -503,7 +505,7 @@ namespace Save
         std::vector<Block> blocks = decrypt(file, fileSize);
         Trainer9LZA trainer(blocks);
 
-        delete[] file;
+        std::free(file);
         return trainer;
     }
 
@@ -522,7 +524,7 @@ namespace Save
         std::vector<Block> blocks = decrypt(file, fileSize);
         Trainer9SV trainer(blocks);
 
-        delete[] file;
+        std::free(file);
         return trainer;
     }
 
@@ -541,7 +543,7 @@ namespace Save
         std::vector<Block> blocks = decrypt(file, fileSize);
         Trainer8LA trainer(blocks);
 
-        delete[] file;
+        std::free(file);
         return trainer;
     }
 
@@ -561,7 +563,7 @@ namespace Save
         std::vector<uint8_t> data(file, file + fileSize);
         Trainer8BDSP trainer(std::move(data));
 
-        delete[] file;
+        std::free(file);
         return trainer;
     }
 
@@ -834,7 +836,7 @@ namespace Save
             if (bytes != nullptr)
             {
                 const std::vector<uint8_t> image(bytes, bytes + byteCount);
-                delete[] bytes;
+                std::free(bytes);
                 if (Trainer3FRLG::detect(image))
                     return Enums::GameVersion::FRLG;
             }
@@ -863,7 +865,7 @@ namespace Save
             return Trainer3FRLG(std::vector<uint8_t>(), fileName);
         }
         std::vector<uint8_t> data(file, file + fileSize);
-        delete[] file;
+        std::free(file);
 
         char szBuf[64];
         snprintf(szBuf, sizeof(szBuf), "0x%zX", fileSize);
@@ -914,14 +916,14 @@ namespace Save
         return true;
     }
 
-    void backupOriginalFile(const char *savePath)
+    bool backupOriginalFile(const char *savePath)
     {
         size_t length = 0;
         uint8_t *original = Utils::readAllBytes(savePath, &length);
         if (!original)
         {
             logErrorToFile("Could not read the save to back it up", savePath);
-            return;
+            return false;
         }
 
         const char *slash = strrchr(savePath, '/');
@@ -930,28 +932,51 @@ namespace Save
         mkdir(std::string(BASE_SAVE_DIRECTORY).c_str(), 0777);
         mkdir(directory.c_str(), 0777);
 
-        time_t nowSeconds = time(nullptr);
-        struct tm *t = localtime(&nowSeconds);
+        const time_t nowSeconds = time(nullptr);
+        struct tm *timeInfo = localtime(&nowSeconds);
         char stamp[32] = "unknown";
-        if (t)
-            strftime(stamp, sizeof(stamp), "%Y%m%d_%H%M%S", t);
+        if (timeInfo)
+            strftime(stamp, sizeof(stamp), "%Y%m%d_%H%M%S", timeInfo);
 
-        const std::string destination = directory + "/" + stamp + "_" + base;
-        FILE *bf = fopen(destination.c_str(), "wb");
-        if (bf)
+        // A second save in the same second must not replace an earlier backup.
+        std::string destination;
+        bool unusedNameFound = false;
+        for (int suffix = 0; suffix < 100; ++suffix)
         {
-            const size_t dialogWidth = fwrite(original, 1, length, bf);
-            fclose(bf);
-            if (dialogWidth == length)
-                logInfoToFile("Save backed up to", destination.c_str());
-            else
-                logErrorToFile("The backup was short", destination.c_str());
+            destination = directory + "/" + stamp +
+                          (suffix ? "_" + std::to_string(suffix) : "") + "_" + base;
+            struct stat existing;
+            if (stat(destination.c_str(), &existing) != 0)
+            {
+                unusedNameFound = true;
+                break;
+            }
         }
-        else
+        if (!unusedNameFound)
         {
+            std::free(original);
+            logErrorToFile("Could not reserve a unique backup name", savePath);
+            return false;
+        }
+
+        FILE *backupFile = fopen(destination.c_str(), "wb");
+        if (!backupFile)
+        {
+            std::free(original);
             logErrorToFile("Could not write the backup", destination.c_str());
+            return false;
         }
-        delete[] original;
+        const size_t written = fwrite(original, 1, length, backupFile);
+        const int closed = fclose(backupFile);
+        std::free(original);
+        if (written != length || closed != 0)
+        {
+            remove(destination.c_str());
+            logErrorToFile("Incomplete backup: original save left untouched", destination.c_str());
+            return false;
+        }
+        logInfoToFile("Save backed up to", destination.c_str());
+        return true;
     }
 
     bool isLooseSaveGroup(GameVersion gameVersion) noexcept
@@ -1111,8 +1136,11 @@ namespace Save
         // the user pointed at their own save, quite possibly the only copy of it -- so the backup
         // has to be of what is on disk now, taken before the write. A caller writing to a scratch
         // copy of its own opts out: a backup per write would leave megabytes behind.
-        if (backupOriginal)
-            backupOriginalFile(savePath);
+        if (backupOriginal && !backupOriginalFile(savePath))
+        {
+            logErrorToFile("Loose save not overwritten: backup failed", savePath);
+            return false;
+        }
 
         // serialize() applies every block and refreshes the checksums last. It is not virtual on
         // the base -- each generation returns its own image -- so this dispatches on the group,
@@ -1184,25 +1212,54 @@ namespace Save
                     footer.assign(existing + existingSize - footerSize, existing + existingSize);
                     logInfoToFile("Preserving an RTC footer on write-back", savePath);
                 }
-                delete[] existing;
+                std::free(existing);
             }
         }
 
-        FILE *f = fopen(savePath, "wb");
-        if (!f)
+        // Do not truncate an emulator's only copy of a save. Stage, flush and verify
+        // on the same filesystem; replace the source only after the bytes check out.
+        const std::string temporary = std::string(savePath) + ".pkse-tmp";
+        FILE *outputFile = fopen(temporary.c_str(), "wb");
+        if (!outputFile)
         {
-            logErrorToFile("Failed to open the save for writing", savePath);
+            logErrorToFile("Failed to open temporary loose save", temporary.c_str());
             return false;
         }
-        const size_t written = fwrite(raw->data(), 1, raw->size(), f);
-        const size_t footerWritten = footer.empty() ? 0 : fwrite(footer.data(), 1, footer.size(), f);
-        fclose(f);
-        if (written != raw->size() || footerWritten != footer.size())
+        const size_t written = fwrite(raw->data(), 1, raw->size(), outputFile);
+        const size_t footerWritten = footer.empty() ? 0 : fwrite(footer.data(), 1, footer.size(), outputFile);
+        const int flushed = fflush(outputFile);
+        const int closed = fclose(outputFile);
+        if (written != raw->size() || footerWritten != footer.size() || flushed != 0 || closed != 0)
         {
-            logErrorToFile("Failed to write the complete save", savePath);
+            remove(temporary.c_str());
+            logErrorToFile("Temporary loose save was not completely written", temporary.c_str());
             return false;
         }
-        logInfoToFile("Loose save written", savePath);
+
+        size_t verifiedLength = 0;
+        uint8_t *verifiedBytes = Utils::readAllBytes(temporary.c_str(), &verifiedLength);
+        const size_t expectedLength = raw->size() + footer.size();
+        bool verified = verifiedBytes && verifiedLength == expectedLength;
+        if (verified)
+        {
+            verified = std::memcmp(verifiedBytes, raw->data(), raw->size()) == 0 &&
+                       (footer.empty() || std::memcmp(verifiedBytes + raw->size(),
+                                                     footer.data(), footer.size()) == 0);
+        }
+        std::free(verifiedBytes);
+        if (!verified)
+        {
+            remove(temporary.c_str());
+            logErrorToFile("Temporary loose save failed read-back verification", temporary.c_str());
+            return false;
+        }
+        if (rename(temporary.c_str(), savePath) != 0)
+        {
+            remove(temporary.c_str());
+            logErrorToFile("Could not replace loose save with verified copy", savePath);
+            return false;
+        }
+        logInfoToFile("Verified loose save written", savePath);
         return true;
     }
 
@@ -1214,7 +1271,11 @@ namespace Save
             return false;
         }
 
-        backupOriginalFile(savePath);
+        if (!backupOriginalFile(savePath))
+        {
+            logErrorToFile("Gen 1 save not overwritten: backup failed", savePath);
+            return false;
+        }
 
         // serialize() applies every block and refreshes the one-byte checksum last.
         const std::vector<uint8_t> &raw = trainer.serialize();

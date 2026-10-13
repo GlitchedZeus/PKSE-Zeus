@@ -158,15 +158,15 @@ namespace Save
      */
     bool saveTrainerInfoRBY(Trainer::Trainer1RBY &trainer, const char *savePath);
 
-    /// True for the generations that arrive as loose files rather than as an installed title.
+    /// True if a group can open from a file (FireRed/LeafGreen supports both files and titles).
     bool isLooseSaveGroup(Enums::GameVersion group) noexcept;
 
     /// A display name for the title bar. Most groups just name themselves; Gen 1 and Gen 2 know
     /// more about their own file than the group does (locale, and for Gen 2 the actual version).
     std::string externalSaveLabel(const Trainer::Trainer &trainer);
 
-    /// Copies a file's CURRENT bytes to sdmc:/PKSE/FileBackups before it is overwritten.
-    void backupOriginalFile(const char *savePath);
+    /// Copies CURRENT bytes to a unique backup. False means DO NOT overwrite the source.
+    bool backupOriginalFile(const char *savePath);
 
     /// Identifies `bytes` and constructs the matching trainer, or returns nullptr if the file is
     /// not a save PKSE opens.

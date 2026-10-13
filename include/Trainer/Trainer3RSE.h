@@ -97,8 +97,8 @@ namespace Trainer
 
         /// True when the active complete slot belongs to Ruby, Sapphire or Emerald.
         ///
-        /// MUST BE TRIED BEFORE FireRed/LeafGreen in the loose-save probe chain: both are 128 KiB
-        /// with the same sector layout, and only the word at Small+0xAC separates them.
+        /// The shared 128 KiB slot scanner selects a complete active slot; the marker at
+        /// Small+0xAC then distinguishes this layout from FireRed/LeafGreen.
         static bool detect(const std::vector<uint8_t> &bytes) noexcept;
 
         void updatePartyBlock() override;
