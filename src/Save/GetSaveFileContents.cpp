@@ -269,7 +269,8 @@ namespace Save
             return false;
         }
 
-        if (passed)
+        // A loose save passes a FILE path, not a backup directory.
+        if (passed && titleId != 0)
             purgeLegacyModifiedSave(backupDir);
         return passed;
     }
@@ -955,25 +956,8 @@ namespace Save
 
     bool isLooseSaveGroup(GameVersion gameVersion) noexcept
     {
-        switch (gameVersion)
-        {
-        case GameVersion::RBY:
-        case GameVersion::GSC:
-        case GameVersion::RSE:
-        case GameVersion::FRLG:
-        case GameVersion::DP:
-        case GameVersion::PT:
-        case GameVersion::HGSS:
-        case GameVersion::BW:
-        case GameVersion::B2W2:
-        case GameVersion::XY:
-        case GameVersion::ORAS:
-        case GameVersion::SM:
-        case GameVersion::USUM:
-            return true;
-        default:
-            return false;
-        }
+        // The probe table defines which groups support loose saves; do not duplicate its list.
+        return groupOpensFromFile(gameVersion);
     }
 
     namespace
@@ -1010,9 +994,9 @@ namespace Save
         const LooseFormat LOOSE_FORMATS[] = {
             {detectRBY, makeLoose<Trainer::Trainer1RBY>, GameVersion::RBY},
             {detectGSC, makeLoose<Trainer::Trainer2GSC>, GameVersion::GSC},
-            // Gen 3 goes between Gen 2 and Gen 4. Both games use 128 KiB saves,
-            // so discriminate by Small+0xAC and require a complete sector-id table.
-            // RSE is tried first, FRLG second; neither detector accepts the other's bytes.
+            // Gen 3 goes between Gen 2 and Gen 4. The shared slot scanner validates
+            // sector rotation and chooses the active complete slot before discriminating
+            // FRLG from RSE by Small+0xAC. The parser uses that SAME selected slot.
             // FireRed/LeafGreen are ALSO installed Switch titles, handled separately on write.
             {Trainer::Trainer3RSE::detect, makeLoose<Trainer::Trainer3RSE>, GameVersion::RSE},
             {Trainer::Trainer3FRLG::detect, makeLoose<Trainer::Trainer3FRLG>, GameVersion::FRLG},

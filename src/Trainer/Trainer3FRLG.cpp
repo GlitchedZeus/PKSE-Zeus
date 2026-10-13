@@ -11,6 +11,7 @@
 #include <cstring>
 
 #include "Trainer/Trainer3FRLG.h"
+#include "Save/Gen3Slot.h"
 #include "Utils/Gen3Text.h" // the Gen 3 character set, shared with Pokemon3FRLG + Convert
 #include "Utils/HelperUtilities.h"
 #include "Utils/Logger.h"
@@ -21,39 +22,12 @@ using namespace Encryption;
 
 namespace Trainer
 {
+    static_assert(FRLG_SECTOR_MAGIC == Save::GEN3_SECTOR_MAGIC,
+                  "FRLG and the shared Gen 3 slot scanner disagree on the sector magic");
 
     bool Trainer3FRLG::detect(const std::vector<uint8_t> &bytes) noexcept
     {
-        if (bytes.size() != FRLG_SAVE_SIZE)
-            return false;
-        // A slot is usable when all 14 logical sector ids are present with the right magic. Checking
-        // both slots matters: a save mid-write has one good slot and one being replaced.
-        for (size_t slotBase : {FRLG_SLOT_A, FRLG_SLOT_B})
-        {
-            bool seen[FRLG_SECTORS] = {false};
-            size_t smallOffset = 0;
-            int found = 0;
-            for (size_t sectorIndex = 0; sectorIndex < FRLG_SECTORS; ++sectorIndex)
-            {
-                const size_t byteOffset = slotBase + sectorIndex * FRLG_SECTOR_SIZE;
-                if (readUInt32LittleEndian(&bytes[byteOffset + 0xFF8]) != FRLG_SECTOR_MAGIC)
-                    break;
-                const uint16_t sectionId = readUInt16LittleEndian(&bytes[byteOffset + 0xFF4]);
-                if (sectionId >= FRLG_SECTORS || seen[sectionId])
-                    break;
-                seen[sectionId] = true;
-                ++found;
-                if (sectionId == 0)
-                    smallOffset = byteOffset;
-            }
-            if (found != static_cast<int>(FRLG_SECTORS))
-                continue;
-            // It is a Gen 3 save. Now: ours, or Ruby/Sapphire/Emerald's? FR/LG write the fixed
-            // value 1 at Small+0xAC and nothing else does, so that one word is the whole test --
-            // the same discriminator Trainer3RSE::detect() uses, read the other way round.
-            return readUInt32LittleEndian(&bytes[smallOffset + 0xAC]) == 1u;
-        }
-        return false;
+        return Save::gen3Kind(Save::selectGen3Slot(bytes)) == Save::Gen3Kind::FRLG;
     }
 
     namespace
@@ -216,47 +190,17 @@ namespace Trainer
 
     void Trainer3FRLG::selectActiveSlot()
     {
-        auto slotCounter = [&](size_t base) -> uint32_t
-        {
-            for (size_t sIndex = 0; sIndex < FRLG_SECTORS; ++sIndex)
-            {
-                const size_t byteOffset = base + sIndex * FRLG_SECTOR_SIZE;
-                if (readUInt16LittleEndian(&saveData[byteOffset + 0xFF4]) == 0)
-                    return readUInt32LittleEndian(&saveData[byteOffset + 0xFFC]);
-            }
-            return 0;
-        };
-        const uint32_t slotACounter = slotCounter(FRLG_SLOT_A);
-        const uint32_t slotBCounter = slotCounter(FRLG_SLOT_B);
-        // An unwritten slot's counter is 0xFFFFFFFF (erased sentinel) and must lose; otherwise greater wins.
-        bool aWins;
-        if (slotACounter == 0xFFFFFFFFu && slotBCounter != 0xFFFFFFFFu)
-            aWins = false;
-        else if (slotBCounter == 0xFFFFFFFFu && slotACounter != 0xFFFFFFFFu)
-            aWins = true;
-        else
-            aWins = (slotACounter >= slotBCounter);
-        slotBaseOffset = aWins ? FRLG_SLOT_A : FRLG_SLOT_B;
+        const Save::Gen3Slot slot = Save::selectGen3Slot(saveData);
+        valid = slot.valid && Save::gen3Kind(slot) == Save::Gen3Kind::FRLG;
+        if (!valid) return;
 
-        // Resolve the rotated sector table: sectorOffset[id] = absolute offset of the sector carrying id.
-        bool seen[FRLG_SECTORS] = {false};
-        int found = 0;
-        for (size_t sIndex = 0; sIndex < FRLG_SECTORS; ++sIndex)
-        {
-            const size_t byteOffset = slotBaseOffset + sIndex * FRLG_SECTOR_SIZE;
-            const uint16_t sectionId = readUInt16LittleEndian(&saveData[byteOffset + 0xFF4]);
-            if (sectionId < FRLG_SECTORS && !seen[sectionId])
-            {
-                sectorOffset[sectionId] = byteOffset;
-                seen[sectionId] = true;
-                ++found;
-            }
-        }
-        valid = (found == static_cast<int>(FRLG_SECTORS));
+        slotBaseOffset = slot.base;
+        for (size_t sectorIndex = 0; sectorIndex < FRLG_SECTORS; ++sectorIndex)
+            sectorOffset[sectorIndex] = slot.offsets[sectorIndex];
 
         char buffer[128];
-        snprintf(buffer, sizeof(buffer), "FRLG active slot @0x%05zX (counter A=%u B=%u)", slotBaseOffset, slotACounter,
-                 slotBCounter);
+        snprintf(buffer, sizeof(buffer), "FRLG active slot @0x%05zX (counter=%u)",
+                 slotBaseOffset, slot.counter);
         logInfoToFile(buffer);
     }
 

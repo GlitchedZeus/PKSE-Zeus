@@ -21,7 +21,8 @@
 #include <cstring>
 
 #include "Trainer/Trainer3RSE.h"
-#include "Trainer/Trainer3FRLG.h" // only for the sector-magic cross-check below
+#include "Trainer/Trainer3FRLG.h" // cross-check the shared sector magic
+#include "Save/Gen3Slot.h"
 #include "Utils/Gen3Text.h" // the Gen 3 character set, shared with Pokemon3RSE + Convert
 #include "Utils/HelperUtilities.h"
 #include "Utils/Logger.h"
@@ -35,8 +36,9 @@ namespace Trainer
     // The sector footer magic is ONE fact about Gen 3, and both containers spell it out
     // separately. Two constants that must agree eventually do not -- this makes that a build
     // failure instead of a save that silently fails to be recognised.
-    static_assert(RSE_SECTOR_MAGIC == FRLG_SECTOR_MAGIC,
-                  "Gen 3 sector magic disagrees between the RSE and FR/LG containers");
+    static_assert(RSE_SECTOR_MAGIC == FRLG_SECTOR_MAGIC &&
+                  RSE_SECTOR_MAGIC == Save::GEN3_SECTOR_MAGIC,
+                  "Gen 3 sector magic disagrees between the RSE, FRLG and shared slot scanner");
 
 
     namespace
@@ -200,47 +202,17 @@ namespace Trainer
 
     void Trainer3RSE::selectActiveSlot()
     {
-        auto slotCounter = [&](size_t base) -> uint32_t
-        {
-            for (size_t sIndex = 0; sIndex < RSE_SECTORS; ++sIndex)
-            {
-                const size_t byteOffset = base + sIndex * RSE_SECTOR_SIZE;
-                if (readUInt16LittleEndian(&saveData[byteOffset + 0xFF4]) == 0)
-                    return readUInt32LittleEndian(&saveData[byteOffset + 0xFFC]);
-            }
-            return 0;
-        };
-        const uint32_t slotACounter = slotCounter(RSE_SLOT_A);
-        const uint32_t slotBCounter = slotCounter(RSE_SLOT_B);
-        // An unwritten slot's counter is 0xFFFFFFFF (erased sentinel) and must lose; otherwise greater wins.
-        bool aWins;
-        if (slotACounter == 0xFFFFFFFFu && slotBCounter != 0xFFFFFFFFu)
-            aWins = false;
-        else if (slotBCounter == 0xFFFFFFFFu && slotACounter != 0xFFFFFFFFu)
-            aWins = true;
-        else
-            aWins = (slotACounter >= slotBCounter);
-        slotBaseOffset = aWins ? RSE_SLOT_A : RSE_SLOT_B;
+        const Save::Gen3Slot slot = Save::selectGen3Slot(saveData);
+        valid = slot.valid && Save::gen3Kind(slot) == Save::Gen3Kind::RSE;
+        if (!valid) return;
 
-        // Resolve the rotated sector table: sectorOffset[id] = absolute offset of the sector carrying id.
-        bool seen[RSE_SECTORS] = {false};
-        int found = 0;
-        for (size_t sIndex = 0; sIndex < RSE_SECTORS; ++sIndex)
-        {
-            const size_t byteOffset = slotBaseOffset + sIndex * RSE_SECTOR_SIZE;
-            const uint16_t sectionId = readUInt16LittleEndian(&saveData[byteOffset + 0xFF4]);
-            if (sectionId < RSE_SECTORS && !seen[sectionId])
-            {
-                sectorOffset[sectionId] = byteOffset;
-                seen[sectionId] = true;
-                ++found;
-            }
-        }
-        valid = (found == static_cast<int>(RSE_SECTORS));
+        slotBaseOffset = slot.base;
+        for (size_t sectorIndex = 0; sectorIndex < RSE_SECTORS; ++sectorIndex)
+            sectorOffset[sectorIndex] = slot.offsets[sectorIndex];
 
         char buffer[128];
-        snprintf(buffer, sizeof(buffer), "RSE active slot @0x%05zX (counter A=%u B=%u)", slotBaseOffset, slotACounter,
-                 slotBCounter);
+        snprintf(buffer, sizeof(buffer), "RSE active slot @0x%05zX (counter=%u)",
+                 slotBaseOffset, slot.counter);
         logInfoToFile(buffer);
     }
 
@@ -281,37 +253,7 @@ namespace Trainer
 
     bool Trainer3RSE::detect(const std::vector<uint8_t> &bytes) noexcept
     {
-        if (bytes.size() != RSE_SAVE_SIZE)
-            return false;
-        // A slot is usable when all 14 logical sector ids are present with the right magic. Checking
-        // both slots matters: a save mid-write has one good slot and one being replaced.
-        for (size_t slotBase : {RSE_SLOT_A, RSE_SLOT_B})
-        {
-            bool seen[RSE_SECTORS] = {false};
-            size_t smallOffset = 0;
-            int found = 0;
-            for (size_t sectorIndex = 0; sectorIndex < RSE_SECTORS; ++sectorIndex)
-            {
-                const size_t byteOffset = slotBase + sectorIndex * RSE_SECTOR_SIZE;
-                if (readUInt32LittleEndian(&bytes[byteOffset + 0xFF8]) != RSE_SECTOR_MAGIC)
-                    break;
-                const uint16_t sectionId = readUInt16LittleEndian(&bytes[byteOffset + 0xFF4]);
-                if (sectionId >= RSE_SECTORS || seen[sectionId])
-                    break;
-                seen[sectionId] = true;
-                ++found;
-                if (sectionId == 0)
-                    smallOffset = byteOffset;
-            }
-            if (found != static_cast<int>(RSE_SECTORS))
-                continue;
-            // It is a Gen 3 save. Now: OURS, or FireRed/LeafGreen's? FR/LG write the fixed value 1
-            // at Small+0xAC and nothing else does, so that one word is the whole test. Trainer3FRLG
-            // is not in the loose probe chain, but this still has to refuse an FR/LG file rather
-            // than open it with Hoenn's offsets and show a plausible, wrong save.
-            return readUInt32LittleEndian(&bytes[smallOffset + 0xAC]) != 1u;
-        }
-        return false;
+        return Save::gen3Kind(Save::selectGen3Slot(bytes)) == Save::Gen3Kind::RSE;
     }
 
     void Trainer3RSE::readBlock(int blockBaseId, size_t logical, uint8_t *destination, size_t length) const

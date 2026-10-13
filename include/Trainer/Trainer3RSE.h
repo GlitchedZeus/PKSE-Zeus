@@ -95,7 +95,7 @@ namespace Trainer
     public:
         explicit Trainer3RSE(std::vector<uint8_t> data, std::string fileName);
 
-        /// True when `bytes` is a Ruby, Sapphire or Emerald save.
+        /// True when the active complete slot belongs to Ruby, Sapphire or Emerald.
         ///
         /// MUST BE TRIED BEFORE FireRed/LeafGreen in the loose-save probe chain: both are 128 KiB
         /// with the same sector layout, and only the word at Small+0xAC separates them.
